@@ -1,5 +1,5 @@
 // Package pipeline owns the orchestration layer of the deployment pipeline.
-// It sequences the five stages and owns the PipelineContext as it flows through them.
+// It sequences the seven stages and owns the PipelineContext as it flows through them.
 //
 // PipelineContext and CloudOutputs are defined in pkg/types (the shared data leaf).
 // They are re-exported here as type aliases so callers that import

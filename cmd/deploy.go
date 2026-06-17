@@ -77,18 +77,16 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 
 	// ── AWS config ────────────────────────────────────────────────────────────
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion(region),
-		awsconfig.WithSharedConfigProfile(profile),
-	)
+	awsOpts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
+	if profile != "" {
+		awsOpts = append(awsOpts, awsconfig.WithSharedConfigProfile(profile))
+	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsOpts...)
 	if err != nil {
 		return fmt.Errorf("AWS config (profile=%s, region=%s): %w", profile, region, err)
 	}
 
-	// ── Docker pinger (shell-out; Docker SDK import deferred to Phase 2) ──────
-	// We run `docker info` rather than importing the Docker SDK client so that
-	// Phase 1 compiles without the docker/docker SDK as a transitive dependency.
-	// The full SDK client is injected in Phase 2 when DockerCompiler is wired.
+	// ── Docker pinger (shell-out to avoid importing the Docker SDK) ───────────
 	dockerPinger := workspace.DockerPingerFunc(func(ctx context.Context) error {
 		out, err := exec.CommandContext(ctx, "docker", "info").CombinedOutput()
 		if err != nil {

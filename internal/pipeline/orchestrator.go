@@ -9,17 +9,14 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/pkg/ports"
 	"github.com/francisco3ferraz/vessel-cli/pkg/types"
 )
 
-// Orchestrator sequences the deployment pipeline stages.
-//
-// In Phase 1: Stage 0 (Preflight) and Stage 1 (Inspect) are fully wired.
-// Stages 2-6 accept nil values and print a stub message until Phase 2-4.
+// Orchestrator sequences the seven deployment pipeline stages.
+// All stages are wired. Nil guards remain for forward-compatibility only.
 type Orchestrator struct {
 	preflight ports.PreflightChecker
 	workspace ports.WorkspaceInitializer
@@ -67,6 +64,19 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 
 // Run executes the deployment pipeline against the provided PipelineContext.
 func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) error {
+	// ── Early-exit for flags not yet fully implemented ─────────────────────────
+	if pctx.Destroy {
+		return fmt.Errorf(
+			"--destroy is not yet implemented\n" +
+				"  To tear down: cd .vessel-cli/tf && terraform destroy",
+		)
+	}
+	if pctx.DryRun {
+		return fmt.Errorf(
+			"--dry-run is not yet implemented\n" +
+				"  To preview: cd .vessel-cli/tf && terraform plan",
+		)
+	}
 	// ── Workspace init & lock ─────────────────────────────────────────────────
 	if err := o.workspace.Init(); err != nil {
 		return fmt.Errorf("workspace init: %w", err)
@@ -207,6 +217,15 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 
 	// ── Stage 7: ECS scale-up ──────────────────────────────────────────────────
 	if o.deployer != nil {
+		// Guard: both ARNs must be populated — if terraform outputs were
+		// incomplete (e.g. partial apply), give a clear error rather than
+		// sending empty strings to the AWS API.
+		if pctx.CloudOutputs.ECSClusterARN == "" || pctx.CloudOutputs.ECSServiceARN == "" {
+			return fmt.Errorf(
+				"ECS cluster/service ARNs are empty after terraform apply\n" +
+					"  Check the ECS console or .vessel-cli/tf/terraform.tfstate",
+			)
+		}
 		o.ui.StartStage("Deploy", "ecs:UpdateService → desired_count=1  (waiting up to 5 min)")
 		if err := o.deployer.Scale(
 			ctx,
@@ -229,7 +248,7 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		ECRRepositoryURI: pctx.CloudOutputs.ECRRepositoryURI,
 		ECSClusterARN:    pctx.CloudOutputs.ECSClusterARN,
 		ECSServiceARN:    pctx.CloudOutputs.ECSServiceARN,
-		LastDeployedAt:   time.Now().UTC().Format(time.RFC3339),
+		// LastDeployedAt is stamped by StateManager.Save() — not set here.
 	}
 	if err := o.stateMgr.Save(pctx.ProjectDir, newState); err != nil {
 		return fmt.Errorf("save state: %w", err)
