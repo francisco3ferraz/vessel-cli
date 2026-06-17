@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/francisco3ferraz/vessel-cli/internal/artifact"
+	"github.com/francisco3ferraz/vessel-cli/internal/docker"
 	"github.com/francisco3ferraz/vessel-cli/internal/pipeline"
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/internal/workspace"
@@ -119,9 +120,10 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Workspace: workspace.NewManager(projectDir),
 		Inspector: workspace.NewInspector(),
 		Generator: artifact.NewGenerator(),
+		Compiler:  docker.NewCompiler(),
 		StateMgr:  stateMgr,
 		UI:        ui.NewDefault(),
-		// Compiler, Renderer, Executor: nil until Phase 2b-3.
+		// Renderer, Executor: nil until Phase 3.
 	})
 
 	return orch.Run(ctx, pctx)

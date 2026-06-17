@@ -116,10 +116,36 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		o.ui.CompleteStage(fmt.Sprintf("Dockerfile → .vessel-cli/Dockerfile"))
 	}
 
-	// ── Stages 3-6: Not yet implemented (Phase 2b–4) ──────────────────────────
-	if o.compiler == nil || o.executor == nil {
+	// ── Stage 3: Docker build ──────────────────────────────────────────────────
+	if o.compiler != nil {
+		o.ui.StartStage("Build", fmt.Sprintf("docker build -t %s", pctx.ImageTag))
+		events := make(chan ports.BuildEvent, 128)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- o.compiler.Build(ctx, pctx, events)
+			close(events)
+		}()
+		for event := range events {
+			switch event.Type {
+			case ports.BuildEventLog, ports.BuildEventStep:
+				o.ui.Log("%s", event.Message)
+			}
+		}
+		if err := <-errCh; err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		id := pctx.ImageID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		o.ui.CompleteStage(fmt.Sprintf("Image: %s  (id: %s)", pctx.ImageTag, id))
+	}
+
+	// ── Stages 4-6: Not yet implemented (Phase 3–4) ───────────────────────────
+	if o.executor == nil {
 		o.ui.Printf("")
-		o.ui.Printf("[Phase 2a]  Docker build not yet wired (next increment).")
+		o.ui.Printf("[Phase 2b]  IaC + ECS deploy not yet wired.")
 	}
 
 	// ── Save partial state ────────────────────────────────────────────────────
