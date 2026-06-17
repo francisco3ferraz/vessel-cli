@@ -3,10 +3,12 @@ package docker_test
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/francisco3ferraz/vessel-cli/internal/docker"
 	"github.com/francisco3ferraz/vessel-cli/pkg/ports"
+	"github.com/francisco3ferraz/vessel-cli/pkg/types"
 )
 
 // ─── Compile-time interface check ─────────────────────────────────────────────
@@ -78,22 +80,57 @@ func TestLineWriter_StripsCR(t *testing.T) {
 	}
 }
 
+// ─── Push helper unit tests (no Docker/AWS required) ─────────────────────────
+
+func TestImageTagSuffix(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"my-app:abc1234", "abc1234"},
+		{"my-app:latest", "latest"},
+		{"my-app", "latest"},   // no colon → defaults to latest
+		{":only-tag", "only-tag"},
+	}
+	for _, c := range cases {
+		got := docker.ImageTagSuffixForTest(c.in)
+		if got != c.want {
+			t.Errorf("ImageTagSuffix(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestECRRepoName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"123456789.dkr.ecr.us-east-1.amazonaws.com/my-app", "my-app"},
+		{"123456789.dkr.ecr.us-east-1.amazonaws.com/org/my-app", "org/my-app"},
+		{"just-a-name", "just-a-name"}, // no slash → return as-is
+	}
+	for _, c := range cases {
+		got := docker.ECRRepoNameForTest(c.in)
+		if got != c.want {
+			t.Errorf("ECRRepoName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // ─── Integration test (auto-skipped if Docker is not available) ───────────────
 
 func TestCompiler_DockerUnavailable_Skip(t *testing.T) {
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skip("Docker daemon not available")
 	}
-	// If Docker IS available, we just assert the compiler was created — the
-	// real build is exercised manually via `vessel-cli deploy`.
 	c := docker.NewCompiler()
 	if c == nil {
 		t.Fatal("NewCompiler returned nil")
 	}
-	// Assert Push stub returns nil (Phase 4 stub contract).
-	events := make(chan ports.BuildEvent, 1)
-	if err := c.Push(context.Background(), nil, events); err != nil {
-		t.Errorf("Push stub should return nil, got: %v", err)
+	// Push with empty ECRRepositoryURI must return a clear error, not panic.
+	events := make(chan ports.BuildEvent, 4)
+	pctx := &types.PipelineContext{AWSRegion: "us-east-1"}
+	err := c.Push(context.Background(), pctx, events)
+	close(events)
+	if err == nil {
+		t.Error("expected error from Push with empty ECRRepositoryURI")
+	}
+	if !strings.Contains(err.Error(), "ECRRepositoryURI") {
+		t.Errorf("expected ECRRepositoryURI mention in error, got: %v", err)
 	}
 }
 

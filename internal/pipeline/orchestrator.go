@@ -78,6 +78,13 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		return fmt.Errorf("load state: %w", err)
 	}
 	pctx.IsFirstDeploy = state.AppName == ""
+	// On subsequent deploys, restore CloudOutputs from state so Stage 6
+	// (Push) has the ECR URI even if Stage 5 hasn't run yet.
+	if state.ECRRepositoryURI != "" {
+		pctx.CloudOutputs.ECRRepositoryURI = state.ECRRepositoryURI
+		pctx.CloudOutputs.ECSClusterARN = state.ECSClusterARN
+		pctx.CloudOutputs.ECSServiceARN = state.ECSServiceARN
+	}
 
 	// ── Stage 0: Preflight ────────────────────────────────────────────────────
 	o.ui.StartStage("Preflight", "Checking environment")
@@ -170,6 +177,28 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 			return err
 		}
 		o.ui.CompleteStage(fmt.Sprintf("ECR: %s", pctx.CloudOutputs.ECRRepositoryURI))
+	}
+
+	// ── Stage 6: ECR push ───────────────────────────────────────────────────
+	if o.compiler != nil {
+		o.ui.StartStage("Push", "Pushing image to ECR")
+		pushEvents := make(chan ports.BuildEvent, 128)
+		pushErrCh := make(chan error, 1)
+		go func() {
+			pushErrCh <- o.compiler.Push(ctx, pctx, pushEvents)
+			close(pushEvents)
+		}()
+		for event := range pushEvents {
+			switch event.Type {
+			case ports.BuildEventPush, ports.BuildEventLog:
+				o.ui.Log("%s", event.Message)
+			}
+		}
+		if err := <-pushErrCh; err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		o.ui.CompleteStage("Image pushed")
 	}
 
 	// ── Save partial state ────────────────────────────────────────────────────

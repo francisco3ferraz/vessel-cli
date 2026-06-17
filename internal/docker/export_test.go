@@ -1,16 +1,21 @@
-// export_test.go exposes internal symbols needed by package-external tests.
-// This file is only compiled during `go test` (package name without _test suffix
-// but in a *_test.go file is the pattern Go uses for white-box test exports).
+// export_test.go exposes internal symbols for package-external tests.
+// Only compiled during `go test`.
 package docker
 
 import "github.com/francisco3ferraz/vessel-cli/pkg/ports"
 
-// NewLineWriterForTest exposes the unexported lineWriter constructor for tests.
+// NewLineWriterForTest exposes the unexported lineWriter constructor.
 func NewLineWriterForTest(events chan<- ports.BuildEvent, t ports.BuildEventType) *lineWriter {
 	return newLineWriter(events, t)
 }
 
-// FlushForTest exposes the unexported flush method for tests.
+// FlushForTest exposes the unexported flush method.
 func (w *lineWriter) FlushForTest() {
 	w.flush()
 }
+
+// ImageTagSuffixForTest exposes imageTagSuffix for unit tests.
+func ImageTagSuffixForTest(tag string) string { return imageTagSuffix(tag) }
+
+// ECRRepoNameForTest exposes ecrRepoName for unit tests.
+func ECRRepoNameForTest(uri string) string { return ecrRepoName(uri) }
