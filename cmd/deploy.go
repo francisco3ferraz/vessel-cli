@@ -15,6 +15,7 @@ import (
 	"github.com/francisco3ferraz/vessel-cli/internal/artifact"
 	"github.com/francisco3ferraz/vessel-cli/internal/docker"
 	"github.com/francisco3ferraz/vessel-cli/internal/pipeline"
+	"github.com/francisco3ferraz/vessel-cli/internal/terraform"
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/internal/workspace"
 )
@@ -121,9 +122,10 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Inspector: workspace.NewInspector(),
 		Generator: artifact.NewGenerator(),
 		Compiler:  docker.NewCompiler(),
+		Renderer:  terraform.NewRenderer(),
 		StateMgr:  stateMgr,
 		UI:        ui.NewDefault(),
-		// Renderer, Executor: nil until Phase 3.
+		// Executor: nil until Phase 3b.
 	})
 
 	return orch.Run(ctx, pctx)

@@ -142,10 +142,21 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		o.ui.CompleteStage(fmt.Sprintf("Image: %s  (id: %s)", pctx.ImageTag, id))
 	}
 
-	// ── Stages 4-6: Not yet implemented (Phase 3–4) ───────────────────────────
+	// ── Stage 4: IaC render ───────────────────────────────────────────────────
+	if o.renderer != nil {
+		o.ui.StartStage("Render", "Generating Terraform files")
+		backend := ports.BackendConfig{Type: ports.BackendTypeLocal}
+		if err := o.renderer.Render(ctx, pctx, backend); err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		o.ui.CompleteStage(fmt.Sprintf("IaC → %s", pctx.TFWorkDir))
+	}
+
+	// ── Stages 5-6: Not yet implemented (Phase 3b) ────────────────────────────
 	if o.executor == nil {
 		o.ui.Printf("")
-		o.ui.Printf("[Phase 2b]  IaC + ECS deploy not yet wired.")
+		o.ui.Printf("[Phase 3a]  Terraform executor not yet wired.")
 	}
 
 	// ── Save partial state ────────────────────────────────────────────────────
