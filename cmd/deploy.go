@@ -14,6 +14,7 @@ import (
 
 	"github.com/francisco3ferraz/vessel-cli/internal/artifact"
 	"github.com/francisco3ferraz/vessel-cli/internal/docker"
+	"github.com/francisco3ferraz/vessel-cli/internal/ecs"
 	"github.com/francisco3ferraz/vessel-cli/internal/pipeline"
 	"github.com/francisco3ferraz/vessel-cli/internal/terraform"
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
@@ -124,6 +125,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Compiler:  docker.NewCompiler(),
 		Renderer:  terraform.NewRenderer(),
 		Executor:  terraform.NewExecutor(),
+		Deployer:  ecs.NewDeployer(region, profile),
 		StateMgr:  stateMgr,
 		UI:        ui.NewDefault(),
 	})

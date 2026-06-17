@@ -143,3 +143,12 @@ type StateManager interface {
 	// pipeline success.
 	Save(projectDir string, state *types.DeploymentState) error
 }
+
+// ─── PORT 7: ECS Deployer ─────────────────────────────────────────────────────
+
+type Deployer interface {
+	// Scale sets the ECS service desired count and blocks until the service
+	// reaches a stable state (running == desired, no in-progress deployments)
+	// or the context is cancelled.
+	Scale(ctx context.Context, clusterARN, serviceARN string, desired int32) error
+}

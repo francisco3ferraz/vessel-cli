@@ -9,6 +9,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/pkg/ports"
@@ -23,10 +24,11 @@ type Orchestrator struct {
 	preflight ports.PreflightChecker
 	workspace ports.WorkspaceInitializer
 	inspector ports.WorkspaceInspector
-	generator ports.ArtifactGenerator // nil until Phase 2
-	compiler  ports.DockerCompiler    // nil until Phase 2
-	renderer  ports.IaCRenderer       // nil until Phase 3
-	executor  ports.TerraformExecutor // nil until Phase 3
+	generator ports.ArtifactGenerator
+	compiler  ports.DockerCompiler
+	renderer  ports.IaCRenderer
+	executor  ports.TerraformExecutor
+	deployer  ports.Deployer
 	stateMgr  ports.StateManager
 	ui        *ui.Renderer
 }
@@ -42,6 +44,7 @@ type OrchestratorConfig struct {
 	Compiler  ports.DockerCompiler
 	Renderer  ports.IaCRenderer
 	Executor  ports.TerraformExecutor
+	Deployer  ports.Deployer
 	StateMgr  ports.StateManager
 	UI        *ui.Renderer
 }
@@ -56,6 +59,7 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 		compiler:  cfg.Compiler,
 		renderer:  cfg.Renderer,
 		executor:  cfg.Executor,
+		deployer:  cfg.Deployer,
 		stateMgr:  cfg.StateMgr,
 		ui:        cfg.UI,
 	}
@@ -201,7 +205,22 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		o.ui.CompleteStage("Image pushed")
 	}
 
-	// ── Save partial state ────────────────────────────────────────────────────
+	// ── Stage 7: ECS scale-up ──────────────────────────────────────────────────
+	if o.deployer != nil {
+		o.ui.StartStage("Deploy", "ecs:UpdateService → desired_count=1  (waiting up to 5 min)")
+		if err := o.deployer.Scale(
+			ctx,
+			pctx.CloudOutputs.ECSClusterARN,
+			pctx.CloudOutputs.ECSServiceARN,
+			1,
+		); err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		o.ui.CompleteStage("✅  Service stable — your app is running on ECS Fargate")
+	}
+
+	// ── Save state ───────────────────────────────────────────────────────────────
 	newState := &types.DeploymentState{
 		AppName:          pctx.AppName,
 		AWSRegion:        pctx.AWSRegion,
@@ -210,6 +229,7 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		ECRRepositoryURI: pctx.CloudOutputs.ECRRepositoryURI,
 		ECSClusterARN:    pctx.CloudOutputs.ECSClusterARN,
 		ECSServiceARN:    pctx.CloudOutputs.ECSServiceARN,
+		LastDeployedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := o.stateMgr.Save(pctx.ProjectDir, newState); err != nil {
 		return fmt.Errorf("save state: %w", err)
