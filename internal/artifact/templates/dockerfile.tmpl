@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+
+# ── Stage 1: Build ────────────────────────────────────────────────────────────
+# --platform forces linux/amd64 so the image runs on Fargate regardless of
+# whether the build machine is Apple Silicon (arm64) or x86_64.
+FROM --platform=linux/amd64 golang:{{.GoVersion}}-alpine AS builder
+
+WORKDIR /app
+
+# Download deps before copying source so this layer is cached on source-only changes.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# CGO_ENABLED=0   → fully static binary, no glibc dependency
+# -ldflags "-w -s" → strip debug info and symbol table (~30% smaller binary)
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-w -s" -o /{{.BinaryName}} {{.BuildTarget}}
+
+# ── Stage 2: Run ──────────────────────────────────────────────────────────────
+# distroless/static has no shell, no package manager, no libc — smallest
+# possible attack surface for a static Go binary.
+FROM --platform=linux/amd64 gcr.io/distroless/static-debian12
+
+COPY --from=builder /{{.BinaryName}} /{{.BinaryName}}
+
+EXPOSE {{.Port}}
+
+# Run as the non-root user included in distroless (uid 65532).
+USER nonroot:nonroot
+
+ENTRYPOINT ["/{{.BinaryName}}"]

@@ -106,19 +106,28 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		o.ui.Log("First deploy — no existing state.json found")
 	}
 
-	// ── Stages 2-6: Not yet implemented (Phase 2–4) ───────────────────────────
-	if o.generator == nil || o.compiler == nil || o.executor == nil {
+	// ── Stage 2: Artifact generation ──────────────────────────────────────────
+	if o.generator != nil {
+		o.ui.StartStage("Generate", "Rendering Dockerfile")
+		if err := o.generator.GenerateDockerfile(ctx, pctx); err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		o.ui.CompleteStage(fmt.Sprintf("Dockerfile → .vessel-cli/Dockerfile"))
+	}
+
+	// ── Stages 3-6: Not yet implemented (Phase 2b–4) ──────────────────────────
+	if o.compiler == nil || o.executor == nil {
 		o.ui.Printf("")
-		o.ui.Printf("[Phase 1]  Stages 2-6 not yet implemented.")
-		o.ui.Printf("           Module validated, workspace ready.")
+		o.ui.Printf("[Phase 2a]  Docker build not yet wired (next increment).")
 	}
 
 	// ── Save partial state ────────────────────────────────────────────────────
-	// Proves the atomic write works and seeds the cached CIDR for Q9.
 	newState := &types.DeploymentState{
-		AppName:    pctx.AppName,
-		AWSRegion:  pctx.AWSRegion,
-		CachedCIDR: pctx.CallerIP, // Q9: persisted for SG idempotency on re-runs
+		AppName:        pctx.AppName,
+		AWSRegion:      pctx.AWSRegion,
+		CachedCIDR:     pctx.CallerIP,
+		LastImageTag:   pctx.ImageTag,
 	}
 	if err := o.stateMgr.Save(pctx.ProjectDir, newState); err != nil {
 		return fmt.Errorf("save state: %w", err)

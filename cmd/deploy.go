@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/cobra"
 
+	"github.com/francisco3ferraz/vessel-cli/internal/artifact"
 	"github.com/francisco3ferraz/vessel-cli/internal/pipeline"
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/internal/workspace"
@@ -117,9 +118,10 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Preflight: preflight,
 		Workspace: workspace.NewManager(projectDir),
 		Inspector: workspace.NewInspector(),
+		Generator: artifact.NewGenerator(),
 		StateMgr:  stateMgr,
 		UI:        ui.NewDefault(),
-		// Generator, Compiler, Renderer, Executor: nil until Phase 2-3.
+		// Compiler, Renderer, Executor: nil until Phase 2b-3.
 	})
 
 	return orch.Run(ctx, pctx)
