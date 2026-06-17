@@ -123,9 +123,9 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Generator: artifact.NewGenerator(),
 		Compiler:  docker.NewCompiler(),
 		Renderer:  terraform.NewRenderer(),
+		Executor:  terraform.NewExecutor(),
 		StateMgr:  stateMgr,
 		UI:        ui.NewDefault(),
-		// Executor: nil until Phase 3b.
 	})
 
 	return orch.Run(ctx, pctx)

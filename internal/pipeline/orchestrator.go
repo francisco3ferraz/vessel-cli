@@ -153,18 +153,34 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 		o.ui.CompleteStage(fmt.Sprintf("IaC → %s", pctx.TFWorkDir))
 	}
 
-	// ── Stages 5-6: Not yet implemented (Phase 3b) ────────────────────────────
-	if o.executor == nil {
-		o.ui.Printf("")
-		o.ui.Printf("[Phase 3a]  Terraform executor not yet wired.")
+	// ── Stage 5: Terraform init + apply ──────────────────────────────────────
+	if o.executor != nil {
+		lw := &tfLogWriter{ui: o.ui}
+
+		o.ui.StartStage("Terraform", "terraform init")
+		if err := o.executor.Init(ctx, pctx.TFWorkDir, lw); err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		o.ui.CompleteStage("init complete")
+
+		o.ui.StartStage("Terraform", "terraform apply  (this may take ~90 s on first run)")
+		if err := o.executor.Apply(ctx, pctx.TFWorkDir, pctx, lw); err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		o.ui.CompleteStage(fmt.Sprintf("ECR: %s", pctx.CloudOutputs.ECRRepositoryURI))
 	}
 
 	// ── Save partial state ────────────────────────────────────────────────────
 	newState := &types.DeploymentState{
-		AppName:        pctx.AppName,
-		AWSRegion:      pctx.AWSRegion,
-		CachedCIDR:     pctx.CallerIP,
-		LastImageTag:   pctx.ImageTag,
+		AppName:          pctx.AppName,
+		AWSRegion:        pctx.AWSRegion,
+		CachedCIDR:       pctx.CallerIP,
+		LastImageTag:     pctx.ImageTag,
+		ECRRepositoryURI: pctx.CloudOutputs.ECRRepositoryURI,
+		ECSClusterARN:    pctx.CloudOutputs.ECSClusterARN,
+		ECSServiceARN:    pctx.CloudOutputs.ECSServiceARN,
 	}
 	if err := o.stateMgr.Save(pctx.ProjectDir, newState); err != nil {
 		return fmt.Errorf("save state: %w", err)
