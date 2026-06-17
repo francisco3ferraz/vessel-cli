@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/francisco3ferraz/vessel-cli/pkg/ports"
+	"github.com/francisco3ferraz/vessel-cli/pkg/types"
 )
 
 // StateManager implements ports.StateManager using a local state.json file.
@@ -18,18 +18,18 @@ func NewStateManager() *StateManager { return &StateManager{} }
 
 // Load reads .vessel-cli/state.json for the given projectDir.
 // Returns a zero-value DeploymentState (not an error) if no file exists.
-func (s *StateManager) Load(projectDir string) (*ports.DeploymentState, error) {
+func (s *StateManager) Load(projectDir string) (*types.DeploymentState, error) {
 	path := stateFilePath(projectDir)
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &ports.DeploymentState{}, nil
+			return &types.DeploymentState{}, nil
 		}
 		return nil, fmt.Errorf("open state.json: %w", err)
 	}
 	defer f.Close()
 
-	var state ports.DeploymentState
+	var state types.DeploymentState
 	if err := json.NewDecoder(f).Decode(&state); err != nil {
 		return nil, fmt.Errorf(
 			"corrupt .vessel-cli/state.json: %w\n"+
@@ -44,7 +44,7 @@ func (s *StateManager) Load(projectDir string) (*ports.DeploymentState, error) {
 // Uses write-to-tmp + os.Rename to prevent corruption on partial write.
 // Only called on full pipeline success; a failed stage does NOT overwrite
 // the previous valid state.json.
-func (s *StateManager) Save(projectDir string, state *ports.DeploymentState) error {
+func (s *StateManager) Save(projectDir string, state *types.DeploymentState) error {
 	state.LastDeployedAt = time.Now().UTC().Format(time.RFC3339)
 
 	path := stateFilePath(projectDir)

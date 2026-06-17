@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	"github.com/francisco3ferraz/vessel-cli/internal/pipeline"
+	"github.com/francisco3ferraz/vessel-cli/pkg/types"
 )
 
 // Inspector implements ports.WorkspaceInspector.
@@ -26,7 +26,7 @@ func NewInspector() *Inspector { return &Inspector{} }
 //   - go.mod is missing or unparseable
 //   - No main package (main.go or cmd/ directory) is found
 //   - Working tree is dirty and pctx.TagOverride is not set (Q3)
-func (i *Inspector) Inspect(_ context.Context, pctx *pipeline.PipelineContext) error {
+func (i *Inspector) Inspect(_ context.Context, pctx *types.PipelineContext) error {
 	// 1. Find and parse go.mod.
 	goModPath := filepath.Join(pctx.ProjectDir, "go.mod")
 	data, err := os.ReadFile(goModPath)
@@ -92,7 +92,7 @@ func validateMainPackage(projectDir string) error {
 
 // resolveGitTag checks for uncommitted changes and sets pctx.ImageTag from
 // the current commit SHA[:8]. Returns an actionable error if the tree is dirty.
-func resolveGitTag(pctx *pipeline.PipelineContext) error {
+func resolveGitTag(pctx *types.PipelineContext) error {
 	shaOut, err := exec.Command("git", "-C", pctx.ProjectDir, "rev-parse", "--short=8", "HEAD").Output()
 	if err != nil {
 		return fmt.Errorf(
