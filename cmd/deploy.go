@@ -8,13 +8,14 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/cobra"
 
 	"github.com/francisco3ferraz/vessel-cli/internal/artifact"
 	"github.com/francisco3ferraz/vessel-cli/internal/docker"
 	"github.com/francisco3ferraz/vessel-cli/internal/ecs"
+	internalecr "github.com/francisco3ferraz/vessel-cli/internal/ecr"
 	"github.com/francisco3ferraz/vessel-cli/internal/pipeline"
 	"github.com/francisco3ferraz/vessel-cli/internal/terraform"
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
@@ -107,7 +108,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		DockerPinger: dockerPinger,
 		TFChecker:    workspace.TFVersionCheckerFunc(workspace.CheckTerraformVersion),
 		STSClient:    sts.NewFromConfig(awsCfg),
-		ECRClient:    ecr.NewFromConfig(awsCfg),
+		ECRClient:    awsecr.NewFromConfig(awsCfg),
 		EC2Client:    ec2.NewFromConfig(awsCfg),
 		IPDetector:   workspace.IPDetectorFunc(workspace.CheckIPHTTP),
 		CachedCIDR:   state.CachedCIDR,
@@ -116,16 +117,17 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 
 	// ── Wire orchestrator ─────────────────────────────────────────────────────
 	orch := pipeline.NewOrchestrator(pipeline.OrchestratorConfig{
-		Preflight: preflight,
-		Workspace: workspace.NewManager(projectDir),
-		Inspector: workspace.NewInspector(),
-		Generator: artifact.NewGenerator(),
-		Compiler:  docker.NewCompiler(),
-		Renderer:  terraform.NewRenderer(),
-		Executor:  terraform.NewExecutor(),
-		Deployer:  ecs.NewDeployer(region, profile),
-		StateMgr:  stateMgr,
-		UI:        ui.NewDefault(),
+		Preflight:  preflight,
+		Workspace:  workspace.NewManager(projectDir),
+		Inspector:  workspace.NewInspector(),
+		Generator:  artifact.NewGenerator(),
+		Compiler:   docker.NewCompiler(),
+		Renderer:   terraform.NewRenderer(),
+		Executor:   terraform.NewExecutor(),
+		Deployer:   ecs.NewDeployer(region, profile),
+		ECRCleaner: internalecr.NewCleaner(region, profile),
+		StateMgr:   stateMgr,
+		UI:         ui.NewDefault(),
 	})
 
 	return orch.Run(ctx, pctx)

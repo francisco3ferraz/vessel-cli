@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/pkg/ports"
@@ -19,47 +20,48 @@ import (
 // Orchestrator sequences the seven deployment pipeline stages.
 // All stages are wired. Nil guards remain for forward-compatibility only.
 type Orchestrator struct {
-	preflight ports.PreflightChecker
-	workspace ports.WorkspaceInitializer
-	inspector ports.WorkspaceInspector
-	generator ports.ArtifactGenerator
-	compiler  ports.DockerCompiler
-	renderer  ports.IaCRenderer
-	executor  ports.TerraformExecutor
-	deployer  ports.Deployer
-	stateMgr  ports.StateManager
-	ui        *ui.Renderer
+	preflight  ports.PreflightChecker
+	workspace  ports.WorkspaceInitializer
+	inspector  ports.WorkspaceInspector
+	generator  ports.ArtifactGenerator
+	compiler   ports.DockerCompiler
+	renderer   ports.IaCRenderer
+	executor   ports.TerraformExecutor
+	deployer   ports.Deployer
+	ecrCleaner ports.ECRCleaner
+	stateMgr   ports.StateManager
+	ui         *ui.Renderer
 }
 
 // OrchestratorConfig holds all injected dependencies.
-// nil values for unimplemented stages (Generator, Compiler, Renderer, Executor)
-// are explicitly allowed in Phase 1.
 type OrchestratorConfig struct {
-	Preflight ports.PreflightChecker
-	Workspace ports.WorkspaceInitializer
-	Inspector ports.WorkspaceInspector
-	Generator ports.ArtifactGenerator
-	Compiler  ports.DockerCompiler
-	Renderer  ports.IaCRenderer
-	Executor  ports.TerraformExecutor
-	Deployer  ports.Deployer
-	StateMgr  ports.StateManager
-	UI        *ui.Renderer
+	Preflight  ports.PreflightChecker
+	Workspace  ports.WorkspaceInitializer
+	Inspector  ports.WorkspaceInspector
+	Generator  ports.ArtifactGenerator
+	Compiler   ports.DockerCompiler
+	Renderer   ports.IaCRenderer
+	Executor   ports.TerraformExecutor
+	Deployer   ports.Deployer
+	ECRCleaner ports.ECRCleaner
+	StateMgr   ports.StateManager
+	UI         *ui.Renderer
 }
 
 // NewOrchestrator constructs an Orchestrator from the provided config.
 func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	return &Orchestrator{
-		preflight: cfg.Preflight,
-		workspace: cfg.Workspace,
-		inspector: cfg.Inspector,
-		generator: cfg.Generator,
-		compiler:  cfg.Compiler,
-		renderer:  cfg.Renderer,
-		executor:  cfg.Executor,
-		deployer:  cfg.Deployer,
-		stateMgr:  cfg.StateMgr,
-		ui:        cfg.UI,
+		preflight:  cfg.Preflight,
+		workspace:  cfg.Workspace,
+		inspector:  cfg.Inspector,
+		generator:  cfg.Generator,
+		compiler:   cfg.Compiler,
+		renderer:   cfg.Renderer,
+		executor:   cfg.Executor,
+		deployer:   cfg.Deployer,
+		ecrCleaner: cfg.ECRCleaner,
+		stateMgr:   cfg.StateMgr,
+		ui:         cfg.UI,
 	}
 }
 
@@ -107,8 +109,17 @@ func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineConte
 	pctx.ImageTag = state.LastImageTag
 	pctx.TFWorkDir = filepath.Join(pctx.ProjectDir, ".vessel-cli", "tf")
 
-	// Re-render templates in destroy mode so the ECR lifecycle.prevent_destroy
-	// guard is removed — without this, `terraform destroy` exits with an error.
+	// ── Step 1: Delete ECR images so terraform destroy can remove the repo ────
+	if o.ecrCleaner != nil && state.ECRRepositoryURI != "" {
+		repoName := ecrRepoName(state.ECRRepositoryURI)
+		o.ui.StartStage("Cleanup", fmt.Sprintf("Deleting ECR images from %s", repoName))
+		if err := o.ecrCleaner.DeleteAllImages(ctx, state.AWSRegion, repoName); err != nil {
+			o.ui.FailStage(err)
+			return err
+		}
+		o.ui.CompleteStage("ECR repository emptied")
+	}
+	// Re-render templates in destroy mode so ECR lifecycle guards are removed.
 	if o.renderer != nil {
 		if err := o.renderer.Render(ctx, pctx, ports.BackendConfig{Type: ports.BackendTypeLocal}); err != nil {
 			return fmt.Errorf("re-render templates for destroy: %w", err)
@@ -320,4 +331,14 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 	o.ui.Log("State saved → .vessel-cli/state.json")
 
 	return nil
+}
+
+// ecrRepoName extracts the repository name from a full ECR URI.
+// "123456789.dkr.ecr.us-east-1.amazonaws.com/my-app" → "my-app"
+func ecrRepoName(uri string) string {
+	parts := strings.SplitN(uri, "/", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return uri
 }

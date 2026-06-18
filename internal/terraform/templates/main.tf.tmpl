@@ -81,14 +81,19 @@ resource "aws_cloudwatch_log_group" "app" {
 resource "aws_ecr_repository" "app" {
   name                 = var.app_name
   image_tag_mutability = "MUTABLE"
+{{- if .IsDestroy}}
+  force_delete         = true
+{{- end}}
 
   image_scanning_configuration {
     scan_on_push = true
   }
+{{- if not .IsDestroy}}
 
   lifecycle {
     prevent_destroy = true
   }
+{{- end}}
 }
 
 # ── ECS Cluster ───────────────────────────────────────────────────────────────

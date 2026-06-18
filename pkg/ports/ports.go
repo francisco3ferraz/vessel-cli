@@ -158,3 +158,13 @@ type Deployer interface {
 	// or the context is cancelled.
 	Scale(ctx context.Context, clusterARN, serviceARN string, desired int32) error
 }
+
+// ─── PORT 8: ECR Cleaner ──────────────────────────────────────────────────────
+
+type ECRCleaner interface {
+	// DeleteAllImages removes every image from the named ECR repository so that
+	// `terraform destroy` can delete the repository without hitting
+	// RepositoryNotEmptyException. Idempotent: succeeds if the repo is already
+	// empty or does not exist.
+	DeleteAllImages(ctx context.Context, region, repoName string) error
+}
