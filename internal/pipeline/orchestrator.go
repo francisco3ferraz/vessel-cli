@@ -9,6 +9,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/pkg/ports"
@@ -62,22 +63,85 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	}
 }
 
-// Run executes the deployment pipeline against the provided PipelineContext.
+// Run executes either the deploy or destroy pipeline depending on pctx flags.
 func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) error {
-	// ── Early-exit for flags not yet fully implemented ─────────────────────────
-	if pctx.Destroy {
-		return fmt.Errorf(
-			"--destroy is not yet implemented\n" +
-				"  To tear down: cd .vessel-cli/tf && terraform destroy",
-		)
-	}
 	if pctx.DryRun {
 		return fmt.Errorf(
 			"--dry-run is not yet implemented\n" +
 				"  To preview: cd .vessel-cli/tf && terraform plan",
 		)
 	}
-	// ── Workspace init & lock ─────────────────────────────────────────────────
+	if pctx.Destroy {
+		return o.runDestroy(ctx, pctx)
+	}
+	return o.runDeploy(ctx, pctx)
+}
+
+// runDestroy tears down all cloud resources via `terraform destroy` and
+// removes .vessel-cli/state.json. It does NOT need Docker or preflight.
+func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineContext) error {
+	if err := o.workspace.Init(); err != nil {
+		return fmt.Errorf("workspace init: %w", err)
+	}
+	if err := o.workspace.AcquireLock(); err != nil {
+		return err
+	}
+	defer o.workspace.ReleaseLock()
+
+	// Confirm a deployment exists before attempting destroy.
+	state, err := o.stateMgr.Load(pctx.ProjectDir)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+	if state.AppName == "" {
+		return fmt.Errorf(
+			"no deployment found — nothing to destroy\n" +
+				"  Run vessel-cli deploy first",
+		)
+	}
+
+	// Populate pctx from state (preflight + inspect are skipped in destroy path).
+	pctx.AppName = state.AppName
+	pctx.AWSRegion = state.AWSRegion
+	pctx.CallerIP = state.CachedCIDR
+	pctx.ImageTag = state.LastImageTag
+	pctx.TFWorkDir = filepath.Join(pctx.ProjectDir, ".vessel-cli", "tf")
+
+	// Re-render templates in destroy mode so the ECR lifecycle.prevent_destroy
+	// guard is removed — without this, `terraform destroy` exits with an error.
+	if o.renderer != nil {
+		if err := o.renderer.Render(ctx, pctx, ports.BackendConfig{Type: ports.BackendTypeLocal}); err != nil {
+			return fmt.Errorf("re-render templates for destroy: %w", err)
+		}
+	}
+
+	lw := &tfLogWriter{ui: o.ui}
+
+	// Re-init so Terraform picks up the updated config (no-op if already init'd).
+	if o.executor != nil {
+		if err := o.executor.Init(ctx, pctx.TFWorkDir, lw); err != nil {
+			return fmt.Errorf("terraform init: %w", err)
+		}
+	}
+
+	o.ui.StartStage("Destroy", fmt.Sprintf("terraform destroy  (removing %s infrastructure)", state.AppName))
+	if err := o.executor.Destroy(ctx, pctx.TFWorkDir, lw); err != nil {
+		o.ui.FailStage(err)
+		return err
+	}
+	o.ui.CompleteStage(fmt.Sprintf("All cloud resources for %q removed", state.AppName))
+
+	if err := o.stateMgr.Delete(pctx.ProjectDir); err != nil {
+		// Non-fatal — log a warning but don't fail the command.
+		o.ui.Log("warning: could not remove state.json: %v", err)
+	} else {
+		o.ui.Log(".vessel-cli/state.json removed")
+	}
+	return nil
+}
+
+// runDeploy is the full deploy pipeline (stages 0–7).
+func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContext) error {
 	if err := o.workspace.Init(); err != nil {
 		return fmt.Errorf("workspace init: %w", err)
 	}

@@ -25,9 +25,12 @@ var templateFS embed.FS
 type TerraformSpec struct {
 	AppName      string
 	AWSRegion    string
-	ImageTag     string
+	ImageTag     string // ECR tag suffix only (e.g. "abc12345", not "app:abc12345")
 	AllowedCIDR  string
-	DesiredCount int // 0 on first deploy (pre-push), 1 on subsequent deploys
+	DesiredCount int
+	// IsDestroy removes lifecycle guards (e.g. prevent_destroy on ECR)
+	// so `terraform destroy` can succeed. Set only by the destroy path.
+	IsDestroy bool
 }
 
 // Renderer implements ports.IaCRenderer.
@@ -53,6 +56,7 @@ func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, _ port
 		ImageTag:     ecrTagSuffix(pctx.ImageTag),
 		AllowedCIDR: pctx.CallerIP,
 		DesiredCount: desiredCount(pctx.IsFirstDeploy),
+		IsDestroy:    pctx.Destroy,
 	}
 
 	workDir := pctx.TFWorkDir

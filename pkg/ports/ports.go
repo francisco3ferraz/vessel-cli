@@ -128,6 +128,9 @@ type TerraformExecutor interface {
 	// populates pctx.CloudOutputs.
 	Apply(ctx context.Context, workDir string, pctx *types.PipelineContext, logWriter io.Writer) error
 
+	// Destroy runs `terraform destroy -auto-approve` and streams logs.
+	Destroy(ctx context.Context, workDir string, logWriter io.Writer) error
+
 	// Output parses `terraform output -json` and returns typed CloudOutputs.
 	Output(ctx context.Context, workDir string) (*types.CloudOutputs, error)
 }
@@ -142,6 +145,9 @@ type StateManager interface {
 	// Save atomically writes state via tmp+rename. Only called on full
 	// pipeline success.
 	Save(projectDir string, state *types.DeploymentState) error
+
+	// Delete removes .vessel-cli/state.json. Called after a successful destroy.
+	Delete(projectDir string) error
 }
 
 // ─── PORT 7: ECS Deployer ─────────────────────────────────────────────────────

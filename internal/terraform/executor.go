@@ -63,3 +63,16 @@ func (e *Executor) Output(ctx context.Context, workDir string) (*types.CloudOutp
 	}
 	return ParseOutputJSON(out)
 }
+
+// Destroy runs `terraform destroy -auto-approve -input=false` in workDir,
+// streaming all output to logWriter.
+func (e *Executor) Destroy(ctx context.Context, workDir string, logWriter io.Writer) error {
+	cmd := exec.CommandContext(ctx, "terraform", "destroy", "-auto-approve", "-input=false")
+	cmd.Dir = workDir
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("terraform destroy: %w", err)
+	}
+	return nil
+}

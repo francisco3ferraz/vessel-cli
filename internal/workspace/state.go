@@ -76,3 +76,14 @@ func (s *StateManager) Save(projectDir string, state *types.DeploymentState) err
 func stateFilePath(projectDir string) string {
 	return filepath.Join(projectDir, ".vessel-cli", "state.json")
 }
+
+// Delete removes .vessel-cli/state.json for the given projectDir.
+// Called after a successful `vessel-cli deploy --destroy`.
+// Returns nil if the file does not exist (idempotent).
+func (s *StateManager) Delete(projectDir string) error {
+	path := stateFilePath(projectDir)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove state.json: %w", err)
+	}
+	return nil
+}
