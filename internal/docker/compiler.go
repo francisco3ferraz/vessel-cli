@@ -197,13 +197,14 @@ func resolveImageID(ctx context.Context, tag string) (string, error) {
 }
 
 // imageTagSuffix extracts the tag portion from a local image name.
-// "my-app:abc1234" → "abc1234".  "my-app" → "latest".
+// "my-app:abc1234" → "abc1234".
+// "my-app" → "my-app" (no colon: treat whole string as tag, not "latest").
 func imageTagSuffix(imageTag string) string {
 	parts := strings.SplitN(imageTag, ":", 2)
 	if len(parts) == 2 && parts[1] != "" {
 		return parts[1]
 	}
-	return "latest"
+	return imageTag // no colon → the full string is the tag
 }
 
 // ecrRepoName extracts the repository name from a full ECR URI.

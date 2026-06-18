@@ -155,7 +155,7 @@ func TestRenderer_TFVars_ContainsCorrectValues(t *testing.T) {
 	for _, want := range []string{
 		`app_name     = "my-app"`,
 		`aws_region   = "us-east-1"`,
-		`image_tag    = "my-app:abc12345"`,
+		`image_tag    = "abc12345"`,
 		`allowed_cidr = "1.2.3.4/32"`,
 	} {
 		if !strings.Contains(tfvars, want) {

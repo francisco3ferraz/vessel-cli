@@ -64,8 +64,14 @@ func (i *Inspector) Inspect(_ context.Context, pctx *types.PipelineContext) erro
 
 	// 3. Git state check and image tag resolution (Q3).
 	//    --tag bypasses git entirely; dirty tree without --tag is a hard error.
+	//    If TagOverride already contains a colon (e.g. "vessel-cli:local") use
+	//    as-is; otherwise prefix with BinaryName so ImageTag is always "name:tag".
 	if pctx.TagOverride != "" {
-		pctx.ImageTag = pctx.TagOverride
+		if strings.Contains(pctx.TagOverride, ":") {
+			pctx.ImageTag = pctx.TagOverride
+		} else {
+			pctx.ImageTag = pctx.BinaryName + ":" + pctx.TagOverride
+		}
 	} else {
 		if err := resolveGitTag(pctx); err != nil {
 			return err

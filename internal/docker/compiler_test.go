@@ -86,7 +86,7 @@ func TestImageTagSuffix(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"my-app:abc1234", "abc1234"},
 		{"my-app:latest", "latest"},
-		{"my-app", "latest"},   // no colon → defaults to latest
+		{"my-app", "my-app"},     // no colon → return as-is (whole string is the tag)
 		{":only-tag", "only-tag"},
 	}
 	for _, c := range cases {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/francisco3ferraz/vessel-cli/pkg/ports"
@@ -45,8 +46,12 @@ func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, _ port
 	spec := TerraformSpec{
 		AppName:      pctx.AppName,
 		AWSRegion:    pctx.AWSRegion,
-		ImageTag:     pctx.ImageTag,
-		AllowedCIDR:  pctx.CallerIP,
+		// ImageTag must be ONLY the tag suffix (e.g. "abc12345" or "local"),
+		// NOT the full local name:tag. The ECR image URL is constructed in
+		// main.tf as: "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
+		// Passing "vessel-cli:local" here would produce an invalid double-colon URL.
+		ImageTag:     ecrTagSuffix(pctx.ImageTag),
+		AllowedCIDR: pctx.CallerIP,
 		DesiredCount: desiredCount(pctx.IsFirstDeploy),
 	}
 
@@ -92,11 +97,23 @@ func renderFile(tmplPath, outPath string, spec TerraformSpec) error {
 	return nil
 }
 
-// desiredCount maps the first-deploy flag to the ECS service desired_count
-// that is hardcoded into the rendered HCL (not a Terraform variable).
+// desiredCount maps the first-deploy flag to the ECS service desired_count.
 func desiredCount(isFirstDeploy bool) int {
 	if isFirstDeploy {
 		return 0
 	}
 	return 1
+}
+
+// ecrTagSuffix extracts the tag portion from a local Docker image tag so it
+// can be used safely in an ECR image URL.
+//
+//	"vessel-cli:abc12345" → "abc12345"
+//	"vessel-cli:local"    → "local"
+//	"vessel-cli"          → "vessel-cli"  (no colon: treat whole string as tag)
+func ecrTagSuffix(imageTag string) string {
+	if idx := strings.LastIndex(imageTag, ":"); idx >= 0 {
+		return imageTag[idx+1:]
+	}
+	return imageTag
 }

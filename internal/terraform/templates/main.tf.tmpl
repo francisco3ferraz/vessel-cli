@@ -139,5 +139,13 @@ resource "aws_ecs_service" "app" {
     assign_public_ip = true
   }
 
+  # Circuit breaker: if the task cannot stay running, ECS marks the deployment
+  # FAILED quickly (~2 min) rather than retrying silently. This lets vessel-cli
+  # report a clear error and surface the task's "stopped reason" from CloudWatch.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = false
+  }
+
   force_new_deployment = true
 }
