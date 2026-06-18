@@ -4,3 +4,7 @@ app_name     = "{{.AppName}}"
 aws_region   = "{{.AWSRegion}}"
 image_tag    = "{{.ImageTag}}"
 allowed_cidr = "{{.AllowedCIDR}}"
+
+env_vars = [{{range .EnvVars}}
+  { name = {{.Name | hclQuote}}, value = {{.Value | hclQuote}} },{{end}}
+]

@@ -21,3 +21,9 @@ variable "allowed_cidr" {
   # No default — vessel-cli always supplies this value explicitly.
   # A missing value here is a render-time error, not a silent fallback.
 }
+
+variable "env_vars" {
+  description = "Environment variables injected into the ECS container. Managed by vessel-cli via --env KEY=VALUE."
+  type        = list(object({ name = string, value = string }))
+  default     = []
+}

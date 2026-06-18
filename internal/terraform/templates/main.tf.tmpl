@@ -114,6 +114,7 @@ resource "aws_ecs_task_definition" "app" {
     name  = var.app_name
     image = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
     portMappings = [{ containerPort = 8080, protocol = "tcp" }]
+    environment  = var.env_vars
     logConfiguration = {
       logDriver = "awslogs"
       options = {

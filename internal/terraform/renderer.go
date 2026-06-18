@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -28,9 +30,16 @@ type TerraformSpec struct {
 	ImageTag     string // ECR tag suffix only (e.g. "abc12345", not "app:abc12345")
 	AllowedCIDR  string
 	DesiredCount int
+	EnvVars      []EnvVar // sorted by Name for deterministic output
 	// IsDestroy removes lifecycle guards (e.g. prevent_destroy on ECR)
 	// so `terraform destroy` can succeed. Set only by the destroy path.
 	IsDestroy bool
+}
+
+// EnvVar is a single name/value environment variable pair.
+type EnvVar struct {
+	Name  string
+	Value string
 }
 
 // Renderer implements ports.IaCRenderer.
@@ -54,8 +63,9 @@ func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, _ port
 		// main.tf as: "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
 		// Passing "vessel-cli:local" here would produce an invalid double-colon URL.
 		ImageTag:     ecrTagSuffix(pctx.ImageTag),
-		AllowedCIDR: pctx.CallerIP,
+		AllowedCIDR:  pctx.CallerIP,
 		DesiredCount: desiredCount(pctx.IsFirstDeploy),
+		EnvVars:      sortedEnvVars(pctx.EnvVars),
 		IsDestroy:    pctx.Destroy,
 	}
 
@@ -85,8 +95,14 @@ func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, _ port
 }
 
 // renderFile parses one embedded template and writes the result to outPath.
+// The hclQuote function is registered so templates can safely quote strings.
 func renderFile(tmplPath, outPath string, spec TerraformSpec) error {
-	tmpl, err := template.ParseFS(templateFS, tmplPath)
+	funcMap := template.FuncMap{
+		// hclQuote wraps s in HCL double-quote syntax with proper escaping.
+		// It uses Go strconv.Quote (same escape sequences as HCL) then re-wraps.
+		"hclQuote": func(s string) string { return strconv.Quote(s) },
+	}
+	tmpl, err := template.New(filepath.Base(tmplPath)).Funcs(funcMap).ParseFS(templateFS, tmplPath)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", tmplPath, err)
 	}
@@ -99,6 +115,24 @@ func renderFile(tmplPath, outPath string, spec TerraformSpec) error {
 		return fmt.Errorf("execute %s: %w", tmplPath, err)
 	}
 	return nil
+}
+
+// sortedEnvVars converts the EnvVars map to a sorted slice for deterministic
+// template output (map iteration order is undefined in Go).
+func sortedEnvVars(m map[string]string) []EnvVar {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]EnvVar, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, EnvVar{Name: k, Value: m[k]})
+	}
+	return out
 }
 
 // desiredCount maps the first-deploy flag to the ECS service desired_count.

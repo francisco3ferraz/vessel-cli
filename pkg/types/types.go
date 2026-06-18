@@ -19,6 +19,9 @@ type PipelineContext struct {
 	AWSRegion  string // e.g., "us-east-1"
 	AWSProfile string // e.g., "default"
 	AppName    string // From --name flag; overrides BinaryName if set
+	// EnvVars holds key=value pairs from --env flags, merged with any values
+	// persisted in state.json from a previous deploy. CLI flags take precedence.
+	EnvVars map[string]string // e.g., {"PORT": "8080", "DB_URL": "..."}
 
 	// ── Stage 0: Behavior flags ───────────────────────────────────────────────
 	TagOverride string // --tag: bypass git SHA and dirty-tree check (Q3)
@@ -64,12 +67,16 @@ type CloudOutputs struct {
 // DeploymentState is the schema for .vessel-cli/state.json.
 // This is vessel-cli's own bookkeeping — NOT the Terraform state file.
 type DeploymentState struct {
-	AppName          string `json:"app_name"`
-	AWSRegion        string `json:"aws_region"`
-	LastImageTag     string `json:"last_image_tag"`
-	ECRRepositoryURI string `json:"ecr_repository_uri"`
-	ECSClusterARN    string `json:"ecs_cluster_arn"`
-	ECSServiceARN    string `json:"ecs_service_arn"`
+	AppName          string            `json:"app_name"`
+	AWSRegion        string            `json:"aws_region"`
+	LastImageTag     string            `json:"last_image_tag"`
+	ECRRepositoryURI string            `json:"ecr_repository_uri"`
+	ECSClusterARN    string            `json:"ecs_cluster_arn"`
+	ECSServiceARN    string            `json:"ecs_service_arn"`
+	// EnvVars persists the environment variables across re-deploys.
+	// A new --env flag overrides a persisted key; omitting --env preserves all
+	// previously set vars. Use --env KEY= (empty value) to unset a key.
+	EnvVars map[string]string `json:"env_vars,omitempty"`
 	// CachedCIDR is set on first deploy and reused on all subsequent deploys
 	// so the SG rule is stable across IP-rotating networks (Q9).
 	CachedCIDR     string `json:"cached_cidr"`

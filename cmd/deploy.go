@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -43,6 +44,7 @@ func init() {
 	deployCmd.Flags().Bool("allow-public", false, "Open port 8080 to 0.0.0.0/0 instead of caller's detected IP (Q6/Q8)")
 	deployCmd.Flags().Bool("dry-run", false, "Render artifacts and show terraform plan; do not apply")
 	deployCmd.Flags().Bool("destroy", false, "Remove all cloud resources for this app")
+	deployCmd.Flags().StringArray("env", nil, "Environment variable in KEY=VALUE format (repeatable). Re-deploys preserve all set vars; use KEY= to unset.")
 }
 
 func runDeploy(cmd *cobra.Command, _ []string) error {
@@ -57,6 +59,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	allowPublic, _ := cmd.Flags().GetBool("allow-public")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	destroy, _ := cmd.Flags().GetBool("destroy")
+	envFlags, _ := cmd.Flags().GetStringArray("env")
 
 	// ── Resolve project directory ─────────────────────────────────────────────
 	projectDir, err := filepath.Abs(".")
@@ -101,6 +104,30 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	state, err := stateMgr.Load(projectDir)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
+	}
+
+	// ── Merge environment variables: state.json baseline + CLI overrides ───────
+	// Start with persisted vars from the previous deploy, then apply any new
+	// --env flags on top. An empty value (KEY=) removes the key.
+	envVars := make(map[string]string)
+	for k, v := range state.EnvVars {
+		envVars[k] = v
+	}
+	for _, kv := range envFlags {
+		idx := strings.Index(kv, "=")
+		if idx < 0 {
+			return fmt.Errorf("invalid --env %q: must be KEY=VALUE", kv)
+		}
+		key, val := kv[:idx], kv[idx+1:]
+		if val == "" {
+			delete(envVars, key) // KEY= unsets the variable
+		} else {
+			envVars[key] = val
+		}
+	}
+	// Apply merged env vars to the pipeline context.
+	if len(envVars) > 0 {
+		pctx.EnvVars = envVars
 	}
 
 	// ── Assemble Preflight with all 6 real checks ─────────────────────────────

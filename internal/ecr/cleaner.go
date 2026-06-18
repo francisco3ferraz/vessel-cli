@@ -27,9 +27,21 @@ func NewCleaner(region, profile string) *Cleaner {
 // compile-time interface guard
 var _ ports.ECRCleaner = &Cleaner{}
 
-// DeleteAllImages removes every image from the named ECR repository in batches
-// of 100 (the ECR API maximum). It is idempotent: a missing repository or an
-// already-empty repository both return nil.
+// DeleteAllImages removes every image from the named ECR repository.
+//
+// BuildKit with --platform flags creates a two-level manifest structure:
+//
+//	manifest list (tagged, e.g. "local") → references individual image manifests
+//	                                        (untagged, digest-only)
+//
+// ECR refuses to delete a child manifest while its parent manifest list still
+// exists ("Requested image referenced by manifest list"). We therefore delete
+// in two passes:
+//  1. Tagged images  — these are the manifest list roots; deleting them
+//     unblocks the children.
+//  2. Untagged digests — now free to be deleted.
+//
+// Idempotent: a missing repository or an already-empty repository return nil.
 func (c *Cleaner) DeleteAllImages(ctx context.Context, region, repoName string) error {
 	if region == "" {
 		region = c.region
@@ -46,55 +58,74 @@ func (c *Cleaner) DeleteAllImages(ctx context.Context, region, repoName string) 
 
 	client := ecr.NewFromConfig(cfg)
 
-	// Page through all image IDs in the repository.
-	var imageIDs []ecrtypes.ImageIdentifier
+	// List ALL image identifiers (tagged + untagged).
+	var tagged, untagged []ecrtypes.ImageIdentifier
 	paginator := ecr.NewListImagesPaginator(client, &ecr.ListImagesInput{
 		RepositoryName: aws.String(repoName),
 	})
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			// If the repository doesn't exist, treat as already clean.
 			var notFound *ecrtypes.RepositoryNotFoundException
 			if errors.As(err, &notFound) {
-				return nil
+				return nil // repo already gone — nothing to do
 			}
 			return fmt.Errorf("list ECR images in %s: %w", repoName, err)
 		}
-		imageIDs = append(imageIDs, page.ImageIds...)
+		for _, id := range page.ImageIds {
+			// Images with a tag are manifest list roots (created by BuildKit).
+			// Images without a tag are child manifests referenced by the list.
+			if aws.ToString(id.ImageTag) != "" {
+				tagged = append(tagged, id)
+			} else {
+				untagged = append(untagged, id)
+			}
+		}
 	}
 
-	if len(imageIDs) == 0 {
+	if len(tagged)+len(untagged) == 0 {
 		return nil // already empty
 	}
 
-	// Delete in batches of 100 (ECR API limit per request).
+	// Pass 1: delete manifest lists (tagged). This unblocks the child manifests.
+	// Pass 2: delete remaining child manifests (untagged).
+	for _, batch := range [][]ecrtypes.ImageIdentifier{tagged, untagged} {
+		if err := deleteBatched(ctx, client, repoName, batch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteBatched sends imageIDs to BatchDeleteImage in chunks of 100.
+// It ignores "referenced by manifest list" failures that can occur if a
+// manifest list was already deleted in a previous partial run.
+func deleteBatched(ctx context.Context, client *ecr.Client, repoName string, imageIDs []ecrtypes.ImageIdentifier) error {
 	const batchSize = 100
 	for i := 0; i < len(imageIDs); i += batchSize {
 		end := i + batchSize
 		if end > len(imageIDs) {
 			end = len(imageIDs)
 		}
-		batch := imageIDs[i:end]
-
 		out, err := client.BatchDeleteImage(ctx, &ecr.BatchDeleteImageInput{
 			RepositoryName: aws.String(repoName),
-			ImageIds:       batch,
+			ImageIds:       imageIDs[i:end],
 		})
 		if err != nil {
 			return fmt.Errorf("delete ECR images in %s: %w", repoName, err)
 		}
-		// BatchDeleteImage returns partial failures; treat any as fatal.
-		if len(out.Failures) > 0 {
-			f := out.Failures[0]
-			return fmt.Errorf(
-				"delete ECR image %s in %s: %s",
-				aws.ToString(f.ImageId.ImageTag),
-				repoName,
-				aws.ToString(f.FailureReason),
-			)
+		for _, f := range out.Failures {
+			// "REFERENCED_BY_MANIFEST_LIST" means the manifest list that referenced
+			// this digest was already deleted in a prior pass or run — safe to skip.
+			if f.FailureCode == ecrtypes.ImageFailureCodeImageReferencedByManifestList {
+				continue
+			}
+			ref := aws.ToString(f.ImageId.ImageDigest)
+			if tag := aws.ToString(f.ImageId.ImageTag); tag != "" {
+				ref = tag
+			}
+			return fmt.Errorf("delete ECR image %q in %s: %s", ref, repoName, aws.ToString(f.FailureReason))
 		}
 	}
-
 	return nil
 }
