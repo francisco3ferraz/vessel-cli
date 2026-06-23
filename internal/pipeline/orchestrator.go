@@ -7,8 +7,10 @@
 package pipeline
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -263,6 +265,27 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 			}
 			o.ui.CompleteStage("dry run complete")
 			return nil
+		}
+
+		if !pctx.SkipConfirm {
+			o.ui.StartStage("Terraform", "terraform plan")
+			if err := o.executor.Plan(ctx, pctx.TFWorkDir, lw); err != nil {
+				o.ui.FailStage(err)
+				return err
+			}
+			o.ui.CompleteStage("plan complete")
+
+			fmt.Print("\n  Do you want to perform these actions? [y/N]: ")
+			reader := bufio.NewReader(os.Stdin)
+			text, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("read input: %w", err)
+			}
+			text = strings.TrimSpace(strings.ToLower(text))
+			if text != "y" && text != "yes" {
+				return fmt.Errorf("deployment aborted by user")
+			}
+			fmt.Println()
 		}
 
 		o.ui.StartStage("Terraform", "terraform apply  (this may take ~90 s on first run)")
