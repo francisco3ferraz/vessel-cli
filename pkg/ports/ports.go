@@ -124,6 +124,9 @@ type TerraformExecutor interface {
 	// Init runs `terraform init`. Idempotent.
 	Init(ctx context.Context, workDir string, logWriter io.Writer) error
 
+	// Plan runs `terraform plan`, streams logs, and stops.
+	Plan(ctx context.Context, workDir string, logWriter io.Writer) error
+
 	// Apply runs `terraform apply -auto-approve`, streams logs, and
 	// populates pctx.CloudOutputs.
 	Apply(ctx context.Context, workDir string, pctx *types.PipelineContext, logWriter io.Writer) error

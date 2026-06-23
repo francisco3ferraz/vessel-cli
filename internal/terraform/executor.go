@@ -33,6 +33,19 @@ func (e *Executor) Init(ctx context.Context, workDir string, logWriter io.Writer
 	return nil
 }
 
+// Plan runs `terraform plan -input=false` in workDir,
+// streaming all output to logWriter.
+func (e *Executor) Plan(ctx context.Context, workDir string, logWriter io.Writer) error {
+	cmd := exec.CommandContext(ctx, "terraform", "plan", "-input=false")
+	cmd.Dir = workDir
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("terraform plan: %w", err)
+	}
+	return nil
+}
+
 // Apply runs `terraform apply -auto-approve -input=false` in workDir,
 // streams output to logWriter, and populates pctx.CloudOutputs on success.
 func (e *Executor) Apply(ctx context.Context, workDir string, pctx *types.PipelineContext, logWriter io.Writer) error {

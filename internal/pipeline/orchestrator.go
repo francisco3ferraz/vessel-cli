@@ -67,12 +67,7 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 
 // Run executes either the deploy or destroy pipeline depending on pctx flags.
 func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) error {
-	if pctx.DryRun {
-		return fmt.Errorf(
-			"--dry-run is not yet implemented\n" +
-				"  To preview: cd .vessel-cli/tf && terraform plan",
-		)
-	}
+
 	if pctx.Destroy {
 		return o.runDestroy(ctx, pctx)
 	}
@@ -213,7 +208,7 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 	}
 
 	// ── Stage 3: Docker build ──────────────────────────────────────────────────
-	if o.compiler != nil {
+	if o.compiler != nil && !pctx.DryRun {
 		o.ui.StartStage("Build", fmt.Sprintf("docker build -t %s", pctx.ImageTag))
 		events := make(chan ports.BuildEvent, 128)
 		errCh := make(chan error, 1)
@@ -259,6 +254,16 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 			return err
 		}
 		o.ui.CompleteStage("init complete")
+
+		if pctx.DryRun {
+			o.ui.StartStage("Terraform", "terraform plan")
+			if err := o.executor.Plan(ctx, pctx.TFWorkDir, lw); err != nil {
+				o.ui.FailStage(err)
+				return err
+			}
+			o.ui.CompleteStage("dry run complete")
+			return nil
+		}
 
 		o.ui.StartStage("Terraform", "terraform apply  (this may take ~90 s on first run)")
 		if err := o.executor.Apply(ctx, pctx.TFWorkDir, pctx, lw); err != nil {
