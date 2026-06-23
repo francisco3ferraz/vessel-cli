@@ -19,3 +19,13 @@ output "ecs_task_def_arn" {
   description = "ARN of the ECS task definition."
   value       = aws_ecs_task_definition.app.arn
 }
+
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer (empty when ALB is not enabled)."
+  value       = {{if .LoadBalancer}}aws_lb.app.dns_name{{else}}""{{end}}
+}
+
+output "alb_arn" {
+  description = "ARN of the Application Load Balancer (empty when ALB is not enabled)."
+  value       = {{if .LoadBalancer}}aws_lb.app.arn{{else}}""{{end}}
+}

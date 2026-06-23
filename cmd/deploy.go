@@ -48,6 +48,8 @@ func init() {
 	deployCmd.Flags().Int("cpu", 0, "Fargate task CPU units (256, 512, 1024, 2048, 4096). Default 256. Persisted across re-deploys.")
 	deployCmd.Flags().Int("memory", 0, "Fargate task memory in MiB (512-30720). Default 512. Persisted across re-deploys.")
 	deployCmd.Flags().Int("port", 0, "Container port to expose (default 8080). Persisted across re-deploys.")
+	deployCmd.Flags().Bool("load-balancer", false, "Provision an Application Load Balancer for a stable URL. Persisted across re-deploys.")
+	deployCmd.Flags().String("certificate-arn", "", "ACM certificate ARN to enable HTTPS on the ALB. Requires --load-balancer.")
 }
 
 func runDeploy(cmd *cobra.Command, _ []string) error {
@@ -66,6 +68,8 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	cpuFlag, _ := cmd.Flags().GetInt("cpu")
 	memoryFlag, _ := cmd.Flags().GetInt("memory")
 	portFlag, _ := cmd.Flags().GetInt("port")
+	lbFlag, _ := cmd.Flags().GetBool("load-balancer")
+	certARNFlag, _ := cmd.Flags().GetString("certificate-arn")
 
 	// ── Resolve project directory ─────────────────────────────────────────────
 	projectDir, err := filepath.Abs(".")
@@ -143,6 +147,17 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	pctx.CPU = mergeInt(cpuFlag, state.CPU, defaultCPU)
 	pctx.Memory = mergeInt(memoryFlag, state.Memory, defaultMemory)
 	pctx.Port = mergeInt(portFlag, state.Port, defaultPort)
+
+	// ── Merge ALB flags: CLI flag > state.json ───────────────────────────────────
+	// LoadBalancer is sticky: once set true via CLI, it persists in state.json
+	// so subsequent re-deploys keep the ALB without re-passing the flag.
+	pctx.LoadBalancer = lbFlag || state.LoadBalancer
+	// CertificateARN: CLI flag wins; fall back to persisted value.
+	if certARNFlag != "" {
+		pctx.CertificateARN = certARNFlag
+	} else {
+		pctx.CertificateARN = state.CertificateARN
+	}
 
 	// ── Assemble Preflight with all 6 real checks ─────────────────────────────
 	preflight := workspace.NewPreflight(workspace.PreflightOptions{

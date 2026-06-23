@@ -43,5 +43,7 @@ func ParseOutputJSON(data []byte) (*types.CloudOutputs, error) {
 		ECSClusterARN:    get("ecs_cluster_arn"),
 		ECSServiceARN:    get("ecs_service_arn"),
 		ECSTaskDefARN:    get("ecs_task_def_arn"),
+		ALBDNSName:       get("alb_dns_name"),
+		ALBARN:           get("alb_arn"),
 	}, nil
 }

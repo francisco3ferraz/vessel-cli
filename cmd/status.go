@@ -140,8 +140,15 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	}
 	field("status", statusLine)
 
-	if publicIP != "" {
-		field("address", fmt.Sprintf("http://%s:8080", publicIP))
+	// Address: prefer stable ALB URL; fall back to floating task public IP.
+	if state.ALBDNSName != "" {
+		scheme := "http"
+		if state.CertificateARN != "" {
+			scheme = "https"
+		}
+		field("address", fmt.Sprintf("%s://%s", scheme, state.ALBDNSName))
+	} else if publicIP != "" {
+		field("address", fmt.Sprintf("http://%s:%d", publicIP, state.Port))
 	} else {
 		field("address", "(no public IP — task may still be starting)")
 	}

@@ -33,3 +33,9 @@ variable "env_vars" {
   type        = list(object({ name = string, value = string }))
   default     = []
 }
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN for HTTPS listener (empty = HTTP only). Set via --certificate-arn."
+  type        = string
+  default     = ""
+}

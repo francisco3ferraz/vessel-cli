@@ -33,6 +33,8 @@ type TerraformSpec struct {
 	CPU          int
 	Memory       int
 	Port         int
+	LoadBalancer   bool
+	CertificateARN string
 	EnvVars      []EnvVar // sorted by Name for deterministic output
 	// IsDestroy removes lifecycle guards (e.g. prevent_destroy on ECR)
 	// so `terraform destroy` can succeed. Set only by the destroy path.
@@ -65,14 +67,16 @@ func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, _ port
 		// NOT the full local name:tag. The ECR image URL is constructed in
 		// main.tf as: "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
 		// Passing "vessel-cli:local" here would produce an invalid double-colon URL.
-		ImageTag:     ecrTagSuffix(pctx.ImageTag),
-		AllowedCIDR:  pctx.CallerIP,
-		DesiredCount: desiredCount(pctx.IsFirstDeploy),
-		CPU:          pctx.CPU,
-		Memory:       pctx.Memory,
-		Port:         pctx.Port,
-		EnvVars:      sortedEnvVars(pctx.EnvVars),
-		IsDestroy:    pctx.Destroy,
+		ImageTag:       ecrTagSuffix(pctx.ImageTag),
+		AllowedCIDR:    pctx.CallerIP,
+		DesiredCount:   desiredCount(pctx.IsFirstDeploy),
+		CPU:            pctx.CPU,
+		Memory:         pctx.Memory,
+		Port:           pctx.Port,
+		LoadBalancer:   pctx.LoadBalancer,
+		CertificateARN: pctx.CertificateARN,
+		EnvVars:        sortedEnvVars(pctx.EnvVars),
+		IsDestroy:      pctx.Destroy,
 	}
 
 

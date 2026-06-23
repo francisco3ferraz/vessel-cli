@@ -35,6 +35,10 @@ type PipelineContext struct {
 	Memory int // Fargate task memory in MiB (512–30720)
 	Port   int // Container port to expose (default 8080)
 
+	// ── Stage 0: Networking flags ──────────────────────────────────────────
+	LoadBalancer    bool   // --load-balancer: provision an ALB in front of tasks
+	CertificateARN  string // --certificate-arn: ACM cert ARN; enables HTTPS listener
+
 	// ── Stage 0: Preflight outputs ────────────────────────────────────────────
 	AWSAccountID string // From sts:GetCallerIdentity
 	CallerIP     string // Detected public IP /32, or cached from state.json (Q9)
@@ -65,6 +69,8 @@ type CloudOutputs struct {
 	ECSClusterARN    string
 	ECSServiceARN    string
 	ECSTaskDefARN    string
+	ALBDNSName       string // e.g., "my-app-alb-1234.us-east-1.elb.amazonaws.com"
+	ALBARN           string
 }
 
 // ─── Persistence schema ───────────────────────────────────────────────────────
@@ -89,5 +95,9 @@ type DeploymentState struct {
 	CPU    int `json:"cpu,omitempty"`    // Fargate task CPU units
 	Memory int `json:"memory,omitempty"` // Fargate task memory in MiB
 	Port   int `json:"port,omitempty"`   // Container port
+	// LoadBalancer and CertificateARN persist ALB configuration across re-deploys.
+	LoadBalancer   bool   `json:"load_balancer,omitempty"`
+	CertificateARN string `json:"certificate_arn,omitempty"`
+	ALBDNSName     string `json:"alb_dns_name,omitempty"`
 	LastDeployedAt string `json:"last_deployed_at"` // RFC3339
 }
