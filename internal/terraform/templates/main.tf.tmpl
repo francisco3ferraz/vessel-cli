@@ -9,6 +9,14 @@ terraform {
       version = "~> 5.0"
     }
   }
+{{if eq .Backend.Type "s3"}}
+  backend "s3" {
+    bucket         = "{{.Backend.S3Bucket}}"
+    key            = "{{.Backend.S3Key}}"
+    region         = "{{.Backend.S3Region}}"
+{{if .Backend.DynamoDBTable}}    dynamodb_table = "{{.Backend.DynamoDBTable}}"{{end}}
+  }
+{{end}}
 }
 
 provider "aws" {

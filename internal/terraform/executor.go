@@ -23,7 +23,7 @@ var _ ports.TerraformExecutor = &Executor{}
 // Init runs `terraform init -input=false -upgrade=false` in workDir,
 // streaming all output to logWriter.
 func (e *Executor) Init(ctx context.Context, workDir string, logWriter io.Writer) error {
-	cmd := exec.CommandContext(ctx, "terraform", "init", "-input=false", "-upgrade=false")
+	cmd := exec.CommandContext(ctx, "terraform", "init", "-input=false", "-upgrade=false", "-migrate-state", "-force-copy")
 	cmd.Dir = workDir
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter

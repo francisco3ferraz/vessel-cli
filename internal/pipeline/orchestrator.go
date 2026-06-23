@@ -88,7 +88,7 @@ func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineConte
 	defer o.workspace.ReleaseLock()
 
 	// Confirm a deployment exists before attempting destroy.
-	state, err := o.stateMgr.Load(pctx.ProjectDir)
+	state, err := o.stateMgr.Load(ctx, pctx.ProjectDir, pctx.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
@@ -118,7 +118,7 @@ func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineConte
 	}
 	// Re-render templates in destroy mode so ECR lifecycle guards are removed.
 	if o.renderer != nil {
-		if err := o.renderer.Render(ctx, pctx, ports.BackendConfig{Type: ports.BackendTypeLocal}); err != nil {
+		if err := o.renderer.Render(ctx, pctx, getBackendConfig(pctx)); err != nil {
 			return fmt.Errorf("re-render templates for destroy: %w", err)
 		}
 	}
@@ -139,7 +139,7 @@ func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineConte
 	}
 	o.ui.CompleteStage(fmt.Sprintf("All cloud resources for %q removed", state.AppName))
 
-	if err := o.stateMgr.Delete(pctx.ProjectDir); err != nil {
+	if err := o.stateMgr.Delete(ctx, pctx.ProjectDir, pctx.RemoteState); err != nil {
 		// Non-fatal — log a warning but don't fail the command.
 		o.ui.Log("warning: could not remove state.json: %v", err)
 	} else {
@@ -159,7 +159,7 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 	defer o.workspace.ReleaseLock()
 
 	// ── Load state → determine IsFirstDeploy ──────────────────────────────────
-	state, err := o.stateMgr.Load(pctx.ProjectDir)
+	state, err := o.stateMgr.Load(ctx, pctx.ProjectDir, pctx.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
@@ -238,7 +238,7 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 	// ── Stage 4: IaC render ───────────────────────────────────────────────────
 	if o.renderer != nil {
 		o.ui.StartStage("Render", "Generating Terraform files")
-		backend := ports.BackendConfig{Type: ports.BackendTypeLocal}
+		backend := getBackendConfig(pctx)
 		if err := o.renderer.Render(ctx, pctx, backend); err != nil {
 			o.ui.FailStage(err)
 			return err
@@ -360,10 +360,14 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 		ALBDNSName:       pctx.CloudOutputs.ALBDNSName,
 		// LastDeployedAt is stamped by StateManager.Save() — not set here.
 	}
-	if err := o.stateMgr.Save(pctx.ProjectDir, newState); err != nil {
+	if err := o.stateMgr.Save(ctx, pctx.ProjectDir, pctx.RemoteState, newState); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
-	o.ui.Log("State saved → .vessel-cli/state.json")
+	if pctx.RemoteState != nil {
+		o.ui.Log("State saved → s3://%s/.../state.json", pctx.RemoteState.Bucket)
+	} else {
+		o.ui.Log("State saved → .vessel-cli/state.json")
+	}
 
 	return nil
 }
@@ -376,4 +380,23 @@ func ecrRepoName(uri string) string {
 		return parts[1]
 	}
 	return uri
+}
+
+func getBackendConfig(pctx *types.PipelineContext) ports.BackendConfig {
+	if pctx.RemoteState == nil || pctx.RemoteState.Bucket == "" {
+		return ports.BackendConfig{Type: ports.BackendTypeLocal}
+	}
+	
+	appID := filepath.Base(pctx.ProjectDir)
+	if pctx.RemoteState.AppID != "" {
+		appID = pctx.RemoteState.AppID
+	}
+
+	return ports.BackendConfig{
+		Type:          ports.BackendTypeS3,
+		S3Bucket:      pctx.RemoteState.Bucket,
+		S3Key:         fmt.Sprintf("%s/terraform.tfstate", appID),
+		S3Region:      pctx.RemoteState.Region,
+		DynamoDBTable: pctx.RemoteState.Table,
+	}
 }

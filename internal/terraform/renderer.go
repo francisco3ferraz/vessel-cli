@@ -39,6 +39,7 @@ type TerraformSpec struct {
 	// IsDestroy removes lifecycle guards (e.g. prevent_destroy on ECR)
 	// so `terraform destroy` can succeed. Set only by the destroy path.
 	IsDestroy bool
+	Backend *ports.BackendConfig
 }
 
 // EnvVar is a single name/value environment variable pair.
@@ -59,7 +60,7 @@ func NewRenderer() *Renderer { return &Renderer{} }
 // Idempotent: same inputs always produce identical output files.
 // The backend parameter is accepted for interface compatibility; in v1 only
 // the local backend is used (no explicit backend block = Terraform default).
-func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, _ ports.BackendConfig) error {
+func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, backend ports.BackendConfig) error {
 	spec := TerraformSpec{
 		AppName:  pctx.AppName,
 		AWSRegion: pctx.AWSRegion,
@@ -77,6 +78,7 @@ func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, _ port
 		CertificateARN: pctx.CertificateARN,
 		EnvVars:        sortedEnvVars(pctx.EnvVars),
 		IsDestroy:      pctx.Destroy,
+		Backend:        &backend,
 	}
 
 

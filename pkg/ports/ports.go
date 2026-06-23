@@ -142,15 +142,16 @@ type TerraformExecutor interface {
 
 type StateManager interface {
 	// Load reads .vessel-cli/state.json. Returns a zero-value state
-	// (not an error) if no file exists yet.
-	Load(projectDir string) (*types.DeploymentState, error)
+	// (not an error) if no file exists yet. If remote is configured,
+	// loads from S3 instead.
+	Load(ctx context.Context, projectDir string, remote *types.RemoteStateConfig) (*types.DeploymentState, error)
 
 	// Save atomically writes state via tmp+rename. Only called on full
-	// pipeline success.
-	Save(projectDir string, state *types.DeploymentState) error
+	// pipeline success. If remote is configured, pushes to S3.
+	Save(ctx context.Context, projectDir string, remote *types.RemoteStateConfig, state *types.DeploymentState) error
 
 	// Delete removes .vessel-cli/state.json. Called after a successful destroy.
-	Delete(projectDir string) error
+	Delete(ctx context.Context, projectDir string, remote *types.RemoteStateConfig) error
 }
 
 // ─── PORT 7: ECS Deployer ─────────────────────────────────────────────────────

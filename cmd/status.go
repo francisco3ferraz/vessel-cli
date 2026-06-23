@@ -37,8 +37,13 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Load local state — this is the source of truth for all resource IDs.
+	projCfg, err := workspace.LoadProjectConfig(projectDir)
+	if err != nil {
+		return fmt.Errorf("load vessel.json: %w", err)
+	}
+
 	stateMgr := workspace.NewStateManager()
-	state, err := stateMgr.Load(projectDir)
+	state, err := stateMgr.Load(ctx, projectDir, projCfg.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}

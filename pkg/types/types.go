@@ -39,6 +39,9 @@ type PipelineContext struct {
 	LoadBalancer    bool   // --load-balancer: provision an ALB in front of tasks
 	CertificateARN  string // --certificate-arn: ACM cert ARN; enables HTTPS listener
 
+	// ── Stage 0: Remote State Configuration ──────────────────────────────────
+	RemoteState *RemoteStateConfig // Populated if vessel.json exists or flags are passed
+
 	// ── Stage 0: Preflight outputs ────────────────────────────────────────────
 	AWSAccountID string // From sts:GetCallerIdentity
 	CallerIP     string // Detected public IP /32, or cached from state.json (Q9)
@@ -100,4 +103,13 @@ type DeploymentState struct {
 	CertificateARN string `json:"certificate_arn,omitempty"`
 	ALBDNSName     string `json:"alb_dns_name,omitempty"`
 	LastDeployedAt string `json:"last_deployed_at"` // RFC3339
+}
+
+// RemoteStateConfig is the schema for the project-level vessel.json file,
+// which is committed to Git so the whole team uses the same state backend.
+type RemoteStateConfig struct {
+	Bucket string `json:"bucket"` // S3 bucket name
+	Table  string `json:"table"`  // DynamoDB table name for locking
+	Region string `json:"region"` // AWS Region of the S3 bucket
+	AppID  string `json:"app_id"` // Used as the S3 prefix, defaults to directory basename
 }

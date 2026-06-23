@@ -21,6 +21,7 @@ import (
 	"github.com/francisco3ferraz/vessel-cli/internal/terraform"
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/internal/workspace"
+	"github.com/francisco3ferraz/vessel-cli/pkg/types"
 )
 
 var deployCmd = &cobra.Command{
@@ -50,6 +51,9 @@ func init() {
 	deployCmd.Flags().Int("port", 0, "Container port to expose (default 8080). Persisted across re-deploys.")
 	deployCmd.Flags().Bool("load-balancer", false, "Provision an Application Load Balancer for a stable URL. Persisted across re-deploys.")
 	deployCmd.Flags().String("certificate-arn", "", "ACM certificate ARN to enable HTTPS on the ALB. Requires --load-balancer.")
+	deployCmd.Flags().String("state-bucket", "", "S3 bucket for remote state. Saves to vessel.json.")
+	deployCmd.Flags().String("state-table", "", "DynamoDB table for remote state locking. Saves to vessel.json.")
+	deployCmd.Flags().String("state-region", "", "AWS region for the remote state bucket. Defaults to the deploy region. Saves to vessel.json.")
 }
 
 func runDeploy(cmd *cobra.Command, _ []string) error {
@@ -70,6 +74,10 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	portFlag, _ := cmd.Flags().GetInt("port")
 	lbFlag, _ := cmd.Flags().GetBool("load-balancer")
 	certARNFlag, _ := cmd.Flags().GetString("certificate-arn")
+
+	stateBucket, _ := cmd.Flags().GetString("state-bucket")
+	stateTable, _ := cmd.Flags().GetString("state-table")
+	stateRegion, _ := cmd.Flags().GetString("state-region")
 
 	// ── Resolve project directory ─────────────────────────────────────────────
 	projectDir, err := filepath.Abs(".")
@@ -109,9 +117,43 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		return nil
 	})
 
+	// ── Remote State Configuration (vessel.json) ─────────────────────────────────
+	projCfg, err := workspace.LoadProjectConfig(projectDir)
+	if err != nil {
+		return fmt.Errorf("load vessel.json: %w", err)
+	}
+
+	cfgChanged := false
+	if stateBucket != "" || stateTable != "" || stateRegion != "" {
+		if projCfg.RemoteState == nil {
+			projCfg.RemoteState = &types.RemoteStateConfig{}
+		}
+		if stateBucket != "" {
+			projCfg.RemoteState.Bucket = stateBucket
+		}
+		if stateTable != "" {
+			projCfg.RemoteState.Table = stateTable
+		}
+		if stateRegion != "" {
+			projCfg.RemoteState.Region = stateRegion
+		} else if projCfg.RemoteState.Region == "" {
+			projCfg.RemoteState.Region = region
+		}
+		cfgChanged = true
+	}
+
+	if cfgChanged {
+		if err := workspace.SaveProjectConfig(projectDir, projCfg); err != nil {
+			return fmt.Errorf("save vessel.json: %w", err)
+		}
+		fmt.Printf("Updated vessel.json with remote state configuration\n")
+	}
+
+	pctx.RemoteState = projCfg.RemoteState
+
 	// ── State manager (load before Preflight to retrieve cached CIDR) ─────────
 	stateMgr := workspace.NewStateManager()
-	state, err := stateMgr.Load(projectDir)
+	state, err := stateMgr.Load(ctx, projectDir, pctx.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}

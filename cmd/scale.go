@@ -48,8 +48,13 @@ func runScale(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load state — source of truth for cluster/service ARNs.
+	projCfg, err := workspace.LoadProjectConfig(projectDir)
+	if err != nil {
+		return fmt.Errorf("load vessel.json: %w", err)
+	}
+
 	stateMgr := workspace.NewStateManager()
-	state, err := stateMgr.Load(projectDir)
+	state, err := stateMgr.Load(ctx, projectDir, projCfg.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
