@@ -45,6 +45,9 @@ func init() {
 	deployCmd.Flags().Bool("dry-run", false, "Render artifacts and show terraform plan; do not apply")
 	deployCmd.Flags().Bool("destroy", false, "Remove all cloud resources for this app")
 	deployCmd.Flags().StringArray("env", nil, "Environment variable in KEY=VALUE format (repeatable). Re-deploys preserve all set vars; use KEY= to unset.")
+	deployCmd.Flags().Int("cpu", 0, "Fargate task CPU units (256, 512, 1024, 2048, 4096). Default 256. Persisted across re-deploys.")
+	deployCmd.Flags().Int("memory", 0, "Fargate task memory in MiB (512-30720). Default 512. Persisted across re-deploys.")
+	deployCmd.Flags().Int("port", 0, "Container port to expose (default 8080). Persisted across re-deploys.")
 }
 
 func runDeploy(cmd *cobra.Command, _ []string) error {
@@ -60,6 +63,9 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	destroy, _ := cmd.Flags().GetBool("destroy")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
+	cpuFlag, _ := cmd.Flags().GetInt("cpu")
+	memoryFlag, _ := cmd.Flags().GetInt("memory")
+	portFlag, _ := cmd.Flags().GetInt("port")
 
 	// ── Resolve project directory ─────────────────────────────────────────────
 	projectDir, err := filepath.Abs(".")
@@ -130,6 +136,14 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		pctx.EnvVars = envVars
 	}
 
+	// ── Merge CPU / Memory / Port: CLI flag > state.json > built-in default ────
+	// A zero CLI flag means "not set"; fall back to the persisted value, then
+	// the built-in default. Values are re-persisted on every successful deploy.
+	const defaultCPU, defaultMemory, defaultPort = 256, 512, 8080
+	pctx.CPU = mergeInt(cpuFlag, state.CPU, defaultCPU)
+	pctx.Memory = mergeInt(memoryFlag, state.Memory, defaultMemory)
+	pctx.Port = mergeInt(portFlag, state.Port, defaultPort)
+
 	// ── Assemble Preflight with all 6 real checks ─────────────────────────────
 	preflight := workspace.NewPreflight(workspace.PreflightOptions{
 		DockerPinger: dockerPinger,
@@ -158,4 +172,16 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	})
 
 	return orch.Run(ctx, pctx)
+}
+
+// mergeInt returns the first non-zero value among cli, persisted, and fallback.
+// This gives CLI flags the highest priority, then persisted state, then the default.
+func mergeInt(cli, persisted, fallback int) int {
+	if cli != 0 {
+		return cli
+	}
+	if persisted != 0 {
+		return persisted
+	}
+	return fallback
 }

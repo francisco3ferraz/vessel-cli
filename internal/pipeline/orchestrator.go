@@ -329,6 +329,9 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 		ECSClusterARN:    pctx.CloudOutputs.ECSClusterARN,
 		ECSServiceARN:    pctx.CloudOutputs.ECSServiceARN,
 		EnvVars:          pctx.EnvVars,
+		CPU:              pctx.CPU,
+		Memory:           pctx.Memory,
+		Port:             pctx.Port,
 		// LastDeployedAt is stamped by StateManager.Save() — not set here.
 	}
 	if err := o.stateMgr.Save(pctx.ProjectDir, newState); err != nil {

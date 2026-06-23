@@ -30,6 +30,11 @@ type PipelineContext struct {
 	Destroy     bool   // --destroy: remove all cloud resources
 	SkipConfirm bool   // --yes: skip plan-and-confirm prompt (for CI)
 
+	// ── Stage 0: Resource sizing flags ───────────────────────────────────────
+	CPU    int // Fargate task CPU units (256, 512, 1024, 2048, 4096)
+	Memory int // Fargate task memory in MiB (512–30720)
+	Port   int // Container port to expose (default 8080)
+
 	// ── Stage 0: Preflight outputs ────────────────────────────────────────────
 	AWSAccountID string // From sts:GetCallerIdentity
 	CallerIP     string // Detected public IP /32, or cached from state.json (Q9)
@@ -79,6 +84,10 @@ type DeploymentState struct {
 	EnvVars map[string]string `json:"env_vars,omitempty"`
 	// CachedCIDR is set on first deploy and reused on all subsequent deploys
 	// so the SG rule is stable across IP-rotating networks (Q9).
-	CachedCIDR     string `json:"cached_cidr"`
+	CachedCIDR string `json:"cached_cidr"`
+	// CPU, Memory, Port are persisted so re-deploys don't require re-passing flags.
+	CPU    int `json:"cpu,omitempty"`    // Fargate task CPU units
+	Memory int `json:"memory,omitempty"` // Fargate task memory in MiB
+	Port   int `json:"port,omitempty"`   // Container port
 	LastDeployedAt string `json:"last_deployed_at"` // RFC3339
 }

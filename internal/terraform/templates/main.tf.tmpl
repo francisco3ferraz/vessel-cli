@@ -36,8 +36,8 @@ resource "aws_security_group" "ecs_tasks" {
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    from_port   = 8080
-    to_port     = 8080
+    from_port   = var.app_port
+    to_port     = var.app_port
     protocol    = "tcp"
     cidr_blocks = [var.allowed_cidr]
   }
@@ -106,14 +106,14 @@ resource "aws_ecs_task_definition" "app" {
   family                   = var.app_name
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "256"
-  memory                   = "512"
+  cpu                      = "{{.CPU}}"
+  memory                   = "{{.Memory}}"
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
 
   container_definitions = jsonencode([{
     name  = var.app_name
     image = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
-    portMappings = [{ containerPort = 8080, protocol = "tcp" }]
+    portMappings = [{ containerPort = var.app_port, protocol = "tcp" }]
     environment  = var.env_vars
     logConfiguration = {
       logDriver = "awslogs"
