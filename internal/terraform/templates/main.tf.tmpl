@@ -71,6 +71,34 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_managed" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Task role: assumed by the running container itself (not ECS control plane).
+# ECS Exec requires SSM permissions on THIS role, not the execution role.
+resource "aws_iam_role" "ecs_task" {
+  name               = "${var.app_name}-ecs-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_trust.json
+}
+
+# Inline SSM policy on the task role so the container can open SSM channels.
+# Without this, `aws ecs execute-command` fails with "not authorized".
+resource "aws_iam_role_policy" "ecs_exec_ssm" {
+  name = "${var.app_name}-ecs-exec-ssm"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel",
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
 # ── CloudWatch log group ──────────────────────────────────────────────────────
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/ecs/${var.app_name}"
@@ -109,6 +137,7 @@ resource "aws_ecs_task_definition" "app" {
   cpu                      = "{{.CPU}}"
   memory                   = "{{.Memory}}"
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
 
   container_definitions = jsonencode([{
     name  = var.app_name
@@ -133,11 +162,12 @@ resource "aws_ecs_task_definition" "app" {
 # always owns this value. First deploy: 0 (image not yet pushed).
 # Subsequent deploys: 1. vessel-cli calls ecs:UpdateService after push.
 resource "aws_ecs_service" "app" {
-  name            = var.app_name
-  cluster         = aws_ecs_cluster.app.id
-  task_definition = aws_ecs_task_definition.app.arn
-  desired_count   = {{.DesiredCount}}
-  launch_type     = "FARGATE"
+  name                   = var.app_name
+  cluster                = aws_ecs_cluster.app.id
+  task_definition        = aws_ecs_task_definition.app.arn
+  desired_count          = {{.DesiredCount}}
+  launch_type            = "FARGATE"
+  enable_execute_command = true
 
   network_configuration {
     subnets          = data.aws_subnets.public.ids
