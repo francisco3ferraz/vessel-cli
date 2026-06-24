@@ -59,7 +59,8 @@ func TestRenderer_MainTF_DesiredCountZeroOnFirstDeploy(t *testing.T) {
 	tfpkg.NewRenderer().Render(context.Background(), pctx, ports.BackendConfig{Type: ports.BackendTypeLocal})
 
 	main := readTF(t, tfDir, "main.tf")
-	if !strings.Contains(main, "desired_count   = 0") {
+	compactMain := strings.ReplaceAll(main, " ", "")
+	if !strings.Contains(compactMain, "desired_count=0") {
 		t.Errorf("expected desired_count = 0 on first deploy\n%s", main)
 	}
 }
@@ -72,7 +73,8 @@ func TestRenderer_MainTF_DesiredCountOneOnSubsequentDeploy(t *testing.T) {
 	tfpkg.NewRenderer().Render(context.Background(), pctx, ports.BackendConfig{})
 
 	main := readTF(t, tfDir, "main.tf")
-	if !strings.Contains(main, "desired_count   = 1") {
+	compactMain := strings.ReplaceAll(main, " ", "")
+	if !strings.Contains(compactMain, "desired_count=1") {
 		t.Errorf("expected desired_count = 1 on subsequent deploy\n%s", main)
 	}
 }
@@ -152,13 +154,16 @@ func TestRenderer_TFVars_ContainsCorrectValues(t *testing.T) {
 	tfpkg.NewRenderer().Render(context.Background(), basePctx(projectDir), ports.BackendConfig{})
 
 	tfvars := readTF(t, tfDir, "terraform.tfvars")
+	
+	// Remove all spaces for a simpler containment check
+	compactTFVars := strings.ReplaceAll(tfvars, " ", "")
 	for _, want := range []string{
-		`app_name     = "my-app"`,
-		`aws_region   = "us-east-1"`,
-		`image_tag    = "abc12345"`,
-		`allowed_cidr = "1.2.3.4/32"`,
+		`app_name="my-app"`,
+		`aws_region="us-east-1"`,
+		`image_tag="abc12345"`,
+		`allowed_cidr="1.2.3.4/32"`,
 	} {
-		if !strings.Contains(tfvars, want) {
+		if !strings.Contains(compactTFVars, want) {
 			t.Errorf("terraform.tfvars missing %q\n%s", want, tfvars)
 		}
 	}
