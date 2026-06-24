@@ -33,6 +33,7 @@ Press Ctrl+C to stop.`,
 func init() {
 	logsCmd.Flags().StringP("since", "s", "5m", "Show logs from this duration ago (e.g. 5m, 1h, 24h)")
 	logsCmd.Flags().Bool("no-follow", false, "Print recent logs and exit (don't follow)")
+	logsCmd.Flags().StringP("environment", "e", "", "Deployment environment (e.g. staging, prod). Reads state.<env>.json.")
 	rootCmd.AddCommand(logsCmd)
 }
 
@@ -51,8 +52,13 @@ func runLogs(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("load vessel.json: %w", err)
 	}
 
+	environment, _ := cmd.Flags().GetString("environment")
+	if environment == "" && projCfg.DefaultEnvironment != "" {
+		environment = projCfg.DefaultEnvironment
+	}
+
 	stateMgr := workspace.NewStateManager()
-	state, err := stateMgr.Load(ctx, projectDir, projCfg.RemoteState)
+	state, err := stateMgr.LoadForEnv(ctx, projectDir, environment, projCfg.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}

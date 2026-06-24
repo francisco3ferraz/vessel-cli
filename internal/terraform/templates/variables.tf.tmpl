@@ -34,6 +34,12 @@ variable "env_vars" {
   default     = []
 }
 
+variable "secret_refs" {
+  description = "Secrets Manager references injected as secrets into the ECS container. Managed by vessel-cli via --secret KEY=VALUE."
+  type        = list(object({ name = string, valueFrom = string }))
+  default     = []
+}
+
 variable "certificate_arn" {
   description = "ACM certificate ARN for HTTPS listener (empty = HTTP only). Set via --certificate-arn."
   type        = string

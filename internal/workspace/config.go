@@ -10,8 +10,10 @@ import (
 )
 
 // ProjectConfig represents the vessel.json file at the project root.
+// This file is committed to Git so the whole team shares the same configuration.
 type ProjectConfig struct {
-	RemoteState *types.RemoteStateConfig `json:"remote_state,omitempty"`
+	RemoteState        *types.RemoteStateConfig `json:"remote_state,omitempty"`
+	DefaultEnvironment string                   `json:"default_environment,omitempty"` // e.g. "staging"; overridden by --environment flag
 }
 
 // LoadProjectConfig reads vessel.json from the project root.

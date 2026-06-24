@@ -10,3 +10,7 @@ certificate_arn = "{{.CertificateARN}}"
 env_vars = [{{range .EnvVars}}
   { name = {{.Name | hclQuote}}, value = {{.Value | hclQuote}} },{{end}}
 ]
+
+secret_refs = [{{range .SecretVars}}
+  { name = {{.Name | hclQuote}}, valueFrom = {{.ValueFrom | hclQuote}} },{{end}}
+]

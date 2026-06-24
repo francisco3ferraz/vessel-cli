@@ -53,18 +53,35 @@ func init() {
 
 const githubActionsTemplate = `name: Deploy
 
+# Multi-environment deployment pipeline:
+#   - Push to 'main' deploys to staging  (vessel-cli deploy --environment staging)
+#   - Push a version tag (v*) deploys to prod (vessel-cli deploy --environment prod)
+#
+# Prerequisites:
+#   1. Configure AWS OIDC: https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions
+#   2. Set the following GitHub Secrets / Variables:
+#        AWS_ROLE_ARN_STAGING  — IAM role ARN for the staging AWS account/environment
+#        AWS_ROLE_ARN_PROD     — IAM role ARN for the prod AWS account/environment
+#   3. Set vessel.json remote_state so state is shared with the team (vessel-cli state init)
+
 on:
   push:
     branches:
-      - main
+      - main       # → staging deploy
+    tags:
+      - "v*"       # → prod deploy
 
 permissions:
-  id-token: write # Required for AWS OIDC authentication
+  id-token: write  # Required for AWS OIDC authentication
   contents: read
 
 jobs:
-  deploy:
+  # ── Staging: deploy on every push to main ──────────────────────────────────
+  deploy-staging:
+    if: github.ref_type == 'branch' && github.ref_name == 'main'
+    name: Deploy → staging
     runs-on: ubuntu-latest
+    environment: staging  # Maps to a GitHub Environment for protection rules
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,15 +94,44 @@ jobs:
       - name: Install vessel-cli
         run: go install github.com/francisco3ferraz/vessel-cli@latest
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS credentials (staging)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # TODO: Replace with your AWS OIDC Role ARN
-          # See: https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
-          role-to-assume: arn:aws:iam::123456789012:role/my-github-actions-role
+          # TODO: Replace with your staging AWS OIDC Role ARN
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_STAGING }}
           aws-region: us-east-1
 
-      - name: Deploy Application
-        # The --yes flag skips the interactive confirmation prompt
-        run: vessel-cli deploy --yes
+      - name: Deploy to staging
+        # --environment namespaces all AWS resources as <app>-staging
+        # --yes skips the interactive confirmation prompt
+        run: vessel-cli deploy --environment staging --yes
+
+  # ── Prod: deploy on semver tag push (e.g. v1.2.3) ─────────────────────────
+  deploy-prod:
+    if: github.ref_type == 'tag'
+    name: Deploy → prod
+    runs-on: ubuntu-latest
+    environment: prod  # GitHub Environment: require approvals, secrets, etc.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install vessel-cli
+        run: go install github.com/francisco3ferraz/vessel-cli@latest
+
+      - name: Configure AWS credentials (prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # TODO: Replace with your prod AWS OIDC Role ARN
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_PROD }}
+          aws-region: us-east-1
+
+      - name: Deploy to prod
+        # --tag pins the image to the exact git tag for reproducibility
+        run: vessel-cli deploy --environment prod --tag ${{ github.ref_name }} --yes
 `

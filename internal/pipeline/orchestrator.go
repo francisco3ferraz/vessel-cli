@@ -22,17 +22,18 @@ import (
 // Orchestrator sequences the seven deployment pipeline stages.
 // All stages are wired. Nil guards remain for forward-compatibility only.
 type Orchestrator struct {
-	preflight  ports.PreflightChecker
-	workspace  ports.WorkspaceInitializer
-	inspector  ports.WorkspaceInspector
-	generator  ports.ArtifactGenerator
-	compiler   ports.DockerCompiler
-	renderer   ports.IaCRenderer
-	executor   ports.TerraformExecutor
-	deployer   ports.Deployer
-	ecrCleaner ports.ECRCleaner
-	stateMgr   ports.StateManager
-	ui         *ui.Renderer
+	preflight   ports.PreflightChecker
+	workspace   ports.WorkspaceInitializer
+	inspector   ports.WorkspaceInspector
+	generator   ports.ArtifactGenerator
+	compiler    ports.DockerCompiler
+	renderer    ports.IaCRenderer
+	executor    ports.TerraformExecutor
+	deployer    ports.Deployer
+	ecrCleaner  ports.ECRCleaner
+	secretsMgr  ports.SecretsManager
+	stateMgr    ports.StateManager
+	ui          *ui.Renderer
 }
 
 // OrchestratorConfig holds all injected dependencies.
@@ -46,6 +47,7 @@ type OrchestratorConfig struct {
 	Executor   ports.TerraformExecutor
 	Deployer   ports.Deployer
 	ECRCleaner ports.ECRCleaner
+	SecretsMgr ports.SecretsManager
 	StateMgr   ports.StateManager
 	UI         *ui.Renderer
 }
@@ -62,6 +64,7 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 		executor:   cfg.Executor,
 		deployer:   cfg.Deployer,
 		ecrCleaner: cfg.ECRCleaner,
+		secretsMgr: cfg.SecretsMgr,
 		stateMgr:   cfg.StateMgr,
 		ui:         cfg.UI,
 	}
@@ -77,7 +80,7 @@ func (o *Orchestrator) Run(ctx context.Context, pctx *types.PipelineContext) err
 }
 
 // runDestroy tears down all cloud resources via `terraform destroy` and
-// removes .vessel-cli/state.json. It does NOT need Docker or preflight.
+// removes .vessel-cli/state[.<env>].json. It does NOT need Docker or preflight.
 func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineContext) error {
 	if err := o.workspace.Init(); err != nil {
 		return fmt.Errorf("workspace init: %w", err)
@@ -104,9 +107,22 @@ func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineConte
 	pctx.AWSRegion = state.AWSRegion
 	pctx.CallerIP = state.CachedCIDR
 	pctx.ImageTag = state.LastImageTag
-	pctx.TFWorkDir = filepath.Join(pctx.ProjectDir, ".vessel-cli", "tf")
+	pctx.TFWorkDir = tfWorkDir(pctx.ProjectDir, pctx.Environment)
 
-	// ── Step 1: Delete ECR images so terraform destroy can remove the repo ────
+	// ── Step 1: Delete Secrets Manager secrets ────────────────────────────────
+	if o.secretsMgr != nil && len(state.SecretKeys) > 0 {
+		o.ui.StartStage("Cleanup", fmt.Sprintf("Deleting %d Secrets Manager secret(s)", len(state.SecretKeys)))
+		for _, key := range state.SecretKeys {
+			secretName := secretName(state.AppName, key)
+			if err := o.secretsMgr.DeleteSecret(ctx, secretName); err != nil {
+				o.ui.FailStage(err)
+				return err
+			}
+		}
+		o.ui.CompleteStage("Secrets deleted from AWS Secrets Manager")
+	}
+
+	// ── Step 2: Delete ECR images so terraform destroy can remove the repo ────
 	if o.ecrCleaner != nil && state.ECRRepositoryURI != "" {
 		repoName := ecrRepoName(state.ECRRepositoryURI)
 		o.ui.StartStage("Cleanup", fmt.Sprintf("Deleting ECR images from %s", repoName))
@@ -143,7 +159,7 @@ func (o *Orchestrator) runDestroy(ctx context.Context, pctx *types.PipelineConte
 		// Non-fatal — log a warning but don't fail the command.
 		o.ui.Log("warning: could not remove state.json: %v", err)
 	} else {
-		o.ui.Log(".vessel-cli/state.json removed")
+		o.ui.Log(".vessel-cli/state%s.json removed", envSuffix(pctx.Environment))
 	}
 	return nil
 }
@@ -192,11 +208,97 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 	if pctx.AppName == "" {
 		pctx.AppName = pctx.BinaryName
 	}
+	// Apply environment suffix to the effective app name so all AWS resources are
+	// namespaced: ECR repo, ECS cluster/service, CloudWatch log group, IAM roles.
+	// No suffix for the default (empty) environment — zero breaking change.
+	if pctx.Environment != "" {
+		pctx.AppName = pctx.AppName + "-" + pctx.Environment
+	}
 	o.ui.CompleteStage(fmt.Sprintf(
 		"Module: %s  Go: %s  Tag: %s", pctx.ModuleName, pctx.GoVersion, pctx.ImageTag,
 	))
 	if pctx.IsFirstDeploy {
-		o.ui.Log("First deploy — no existing state.json found")
+		if pctx.Environment != "" {
+			o.ui.Log("First deploy for environment %q — no existing state found", pctx.Environment)
+		} else {
+			o.ui.Log("First deploy — no existing state.json found")
+		}
+	}
+
+	// ── Stage 0.5: Secrets sync ───────────────────────────────────────────────
+	// Writes/updates --secret KEY=VALUE values in AWS Secrets Manager, collecting
+	// the returned ARNs for injection into the Terraform task definition.
+	// Runs only when there are new secret flags; persisted secret keys from state
+	// are re-resolved on each deploy to ensure ARNs are always current.
+	if o.secretsMgr != nil && (len(pctx.SecretVars) > 0 || len(state.SecretKeys) > 0) {
+		o.ui.StartStage("Secrets", "Syncing secrets with AWS Secrets Manager")
+
+		// Build the full set of secret keys: existing keys + new flags.
+		allSecretKeys := make(map[string]struct{})
+		for _, k := range state.SecretKeys {
+			allSecretKeys[k] = struct{}{}
+		}
+		// Handle --secret KEY= (empty value) as a delete instruction.
+		for k, v := range pctx.SecretVars {
+			if v == "" {
+				delete(allSecretKeys, k) // will be deleted below
+			} else {
+				allSecretKeys[k] = struct{}{}
+			}
+		}
+
+		pctx.SecretARNs = make(map[string]string)
+
+		// Delete secrets that were explicitly cleared with KEY=.
+		for k, v := range pctx.SecretVars {
+			if v == "" {
+				name := secretName(pctx.AppName, k)
+				if err := o.secretsMgr.DeleteSecret(ctx, name); err != nil {
+					o.ui.FailStage(err)
+					return err
+				}
+				o.ui.Log("Deleted secret: %s", k)
+			}
+		}
+
+		// Upsert new/updated secrets and resolve ARNs for existing keys.
+		for k := range allSecretKeys {
+			name := secretName(pctx.AppName, k)
+			var arn string
+			if v, isNew := pctx.SecretVars[k]; isNew && v != "" {
+				// New or updated secret — write the value.
+				arn, err = o.secretsMgr.PutSecret(ctx, name, v)
+				if err != nil {
+					o.ui.FailStage(err)
+					return err
+				}
+				o.ui.Log("Synced secret: %s → %s", k, arn)
+			} else {
+				// Existing secret — fetch ARN without exposing value.
+				// We re-use PutSecret with the existing value, but since we
+				// don't have the value here, we derive the ARN by convention.
+				// The ARN for SM secrets follows: arn:aws:secretsmanager:<region>:<account>:secret:<name>
+				arn = fmt.Sprintf("arn:aws:secretsmanager:%s:%s:secret:%s",
+					pctx.AWSRegion, pctx.AWSAccountID, name)
+				// The real ARN has a random suffix appended by Secrets Manager.
+				// To avoid the suffix problem, we reference the secret by name
+				// using the secretsmanager:GetSecretValue SecretId which accepts names too.
+				// Store the name-form ARN: arn:...::secret:<name> (no suffix).
+				// ECS task definitions accept the secret name directly as valueFrom.
+				arn = name // ECS `secrets.valueFrom` accepts the secret name directly
+			}
+			pctx.SecretARNs[k] = arn
+		}
+
+		// Compute the new set of persisted keys (exclude deleted ones).
+		newKeys := make([]string, 0, len(allSecretKeys))
+		for k := range allSecretKeys {
+			newKeys = append(newKeys, k)
+		}
+
+		o.ui.CompleteStage(fmt.Sprintf("%d secret(s) synced", len(pctx.SecretARNs)))
+		// Store the resolved keys back — will be persisted to state at the end.
+		state.SecretKeys = newKeys
 	}
 
 	// ── Stage 2: Artifact generation ──────────────────────────────────────────
@@ -238,6 +340,8 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 	// ── Stage 4: IaC render ───────────────────────────────────────────────────
 	if o.renderer != nil {
 		o.ui.StartStage("Render", "Generating Terraform files")
+		// Set the namespaced TF working directory before rendering.
+		pctx.TFWorkDir = tfWorkDir(pctx.ProjectDir, pctx.Environment)
 		backend := getBackendConfig(pctx)
 		if err := o.renderer.Render(ctx, pctx, backend); err != nil {
 			o.ui.FailStage(err)
@@ -345,6 +449,7 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 	// ── Save state ───────────────────────────────────────────────────────────────
 	newState := &types.DeploymentState{
 		AppName:          pctx.AppName,
+		Environment:      pctx.Environment,
 		AWSRegion:        pctx.AWSRegion,
 		CachedCIDR:       pctx.CallerIP,
 		LastImageTag:     pctx.ImageTag,
@@ -352,6 +457,7 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 		ECSClusterARN:    pctx.CloudOutputs.ECSClusterARN,
 		ECSServiceARN:    pctx.CloudOutputs.ECSServiceARN,
 		EnvVars:          pctx.EnvVars,
+		SecretKeys:       state.SecretKeys,
 		CPU:              pctx.CPU,
 		Memory:           pctx.Memory,
 		Port:             pctx.Port,
@@ -364,12 +470,41 @@ func (o *Orchestrator) runDeploy(ctx context.Context, pctx *types.PipelineContex
 		return fmt.Errorf("save state: %w", err)
 	}
 	if pctx.RemoteState != nil {
-		o.ui.Log("State saved → s3://%s/.../state.json", pctx.RemoteState.Bucket)
+		o.ui.Log("State saved → s3://%s/.../state%s.json", pctx.RemoteState.Bucket, envSuffix(pctx.Environment))
 	} else {
-		o.ui.Log("State saved → .vessel-cli/state.json")
+		o.ui.Log("State saved → .vessel-cli/state%s.json", envSuffix(pctx.Environment))
 	}
 
 	return nil
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// tfWorkDir returns the Terraform working directory, namespaced by environment.
+// env="" → .vessel-cli/tf/
+// env="staging" → .vessel-cli/tf-staging/
+func tfWorkDir(projectDir, env string) string {
+	dir := "tf"
+	if env != "" {
+		dir = "tf-" + env
+	}
+	return filepath.Join(projectDir, ".vessel-cli", dir)
+}
+
+// envSuffix returns the state file suffix for the given environment.
+// env="" → ""
+// env="staging" → ".staging"
+func envSuffix(env string) string {
+	if env == "" {
+		return ""
+	}
+	return "." + env
+}
+
+// secretName returns the Secrets Manager secret name for a given app and key.
+// Format: /vessel/<appName>/<KEY>
+func secretName(appName, key string) string {
+	return fmt.Sprintf("/vessel/%s/%s", appName, key)
 }
 
 // ecrRepoName extracts the repository name from a full ECR URI.
@@ -386,16 +521,24 @@ func getBackendConfig(pctx *types.PipelineContext) ports.BackendConfig {
 	if pctx.RemoteState == nil || pctx.RemoteState.Bucket == "" {
 		return ports.BackendConfig{Type: ports.BackendTypeLocal}
 	}
-	
+
 	appID := filepath.Base(pctx.ProjectDir)
 	if pctx.RemoteState.AppID != "" {
 		appID = pctx.RemoteState.AppID
 	}
 
+	// Namespace the Terraform state key by environment:
+	// <appID>/terraform.tfstate  (default)
+	// <appID>/staging/terraform.tfstate
+	tfStateKey := fmt.Sprintf("%s/terraform.tfstate", appID)
+	if pctx.Environment != "" {
+		tfStateKey = fmt.Sprintf("%s/%s/terraform.tfstate", appID, pctx.Environment)
+	}
+
 	return ports.BackendConfig{
 		Type:          ports.BackendTypeS3,
 		S3Bucket:      pctx.RemoteState.Bucket,
-		S3Key:         fmt.Sprintf("%s/terraform.tfstate", appID),
+		S3Key:         tfStateKey,
 		S3Region:      pctx.RemoteState.Region,
 		DynamoDBTable: pctx.RemoteState.Table,
 	}

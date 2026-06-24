@@ -19,13 +19,14 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show deployment status and public address of the current project",
-	Long: `status reads .vessel-cli/state.json and queries AWS for the current
+	Long: `status reads .vessel-cli/state[.<env>].json and queries AWS for the current
 task health, public IP address, and a ready-to-run log command.`,
 	RunE: runStatus,
 }
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
+	statusCmd.Flags().StringP("environment", "e", "", "Deployment environment (e.g. staging, prod). Reads state.<env>.json.")
 }
 
 func runStatus(cmd *cobra.Command, _ []string) error {
@@ -42,15 +43,25 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("load vessel.json: %w", err)
 	}
 
+	environment, _ := cmd.Flags().GetString("environment")
+	if environment == "" && projCfg.DefaultEnvironment != "" {
+		environment = projCfg.DefaultEnvironment
+	}
+
 	stateMgr := workspace.NewStateManager()
-	state, err := stateMgr.Load(ctx, projectDir, projCfg.RemoteState)
+	state, err := stateMgr.LoadForEnv(ctx, projectDir, environment, projCfg.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
 	if state.AppName == "" {
+		envHint := ""
+		if environment != "" {
+			envHint = fmt.Sprintf(" for environment %q", environment)
+		}
 		return fmt.Errorf(
-			"no deployment found in this directory\n" +
+			"no deployment found in this directory%s\n"+
 				"  Run: vessel-cli deploy",
+			envHint,
 		)
 	}
 
@@ -87,10 +98,16 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	field := func(k, v string) { fmt.Printf("  %-14s%s\n", k+":", v) }
 
 	field("app", state.AppName)
+	if environment != "" {
+		field("environment", environment)
+	}
 	field("region", region)
 	field("image", state.LastImageTag)
 	if state.LastDeployedAt != "" {
 		field("deployed", humanAgo(state.LastDeployedAt))
+	}
+	if len(state.SecretKeys) > 0 {
+		field("secrets", strings.Join(state.SecretKeys, ", "))
 	}
 
 	if len(taskList.TaskArns) == 0 {

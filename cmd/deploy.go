@@ -18,6 +18,7 @@ import (
 	"github.com/francisco3ferraz/vessel-cli/internal/ecs"
 	internalecr "github.com/francisco3ferraz/vessel-cli/internal/ecr"
 	"github.com/francisco3ferraz/vessel-cli/internal/pipeline"
+	"github.com/francisco3ferraz/vessel-cli/internal/secrets"
 	"github.com/francisco3ferraz/vessel-cli/internal/terraform"
 	"github.com/francisco3ferraz/vessel-cli/internal/ui"
 	"github.com/francisco3ferraz/vessel-cli/internal/workspace"
@@ -40,12 +41,14 @@ replace only when the task definition changes.`,
 func init() {
 	rootCmd.AddCommand(deployCmd)
 	deployCmd.Flags().String("name", "", "Application name (default: derived from go.mod module name)")
+	deployCmd.Flags().StringP("environment", "e", "", "Deployment environment (e.g. staging, prod). Namespaces all AWS resources as <app>-<env>.")
 	deployCmd.Flags().String("tag", "", "Image tag override — bypasses git SHA check and dirty-tree gate (Q3)")
 	deployCmd.Flags().Bool("yes", false, "Skip plan-and-confirm prompts (for CI)")
 	deployCmd.Flags().Bool("allow-public", false, "Open port 8080 to 0.0.0.0/0 instead of caller's detected IP (Q6/Q8)")
 	deployCmd.Flags().Bool("dry-run", false, "Render artifacts and show terraform plan; do not apply")
 	deployCmd.Flags().Bool("destroy", false, "Remove all cloud resources for this app")
 	deployCmd.Flags().StringArray("env", nil, "Environment variable in KEY=VALUE format (repeatable). Re-deploys preserve all set vars; use KEY= to unset.")
+	deployCmd.Flags().StringArray("secret", nil, "Secret in KEY=VALUE format — stored in AWS Secrets Manager, never in state.json. Use KEY= to delete.")
 	deployCmd.Flags().Int("cpu", 0, "Fargate task CPU units (256, 512, 1024, 2048, 4096). Default 256. Persisted across re-deploys.")
 	deployCmd.Flags().Int("memory", 0, "Fargate task memory in MiB (512-30720). Default 512. Persisted across re-deploys.")
 	deployCmd.Flags().Int("port", 0, "Container port to expose (default 8080). Persisted across re-deploys.")
@@ -59,16 +62,18 @@ func init() {
 func runDeploy(cmd *cobra.Command, _ []string) error {
 	ctx := context.Background()
 
-	// ── Resolve flags ────────────────────────────────────────────────────────
+	// ── Resolve flags ───────────────────────────────────────────────────────────────────
 	region, _ := cmd.Root().PersistentFlags().GetString("region")
 	profile, _ := cmd.Root().PersistentFlags().GetString("profile")
 	name, _ := cmd.Flags().GetString("name")
+	environment, _ := cmd.Flags().GetString("environment")
 	tag, _ := cmd.Flags().GetString("tag")
 	yes, _ := cmd.Flags().GetBool("yes")
 	allowPublic, _ := cmd.Flags().GetBool("allow-public")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	destroy, _ := cmd.Flags().GetBool("destroy")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
+	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	cpuFlag, _ := cmd.Flags().GetInt("cpu")
 	memoryFlag, _ := cmd.Flags().GetInt("memory")
 	portFlag, _ := cmd.Flags().GetInt("port")
@@ -79,18 +84,22 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	stateTable, _ := cmd.Flags().GetString("state-table")
 	stateRegion, _ := cmd.Flags().GetString("state-region")
 
-	// ── Resolve project directory ─────────────────────────────────────────────
+	// If --environment not set, fall back to vessel.json default_environment.
+	// Empty string = default (no namespace suffix), preserving backward compat.
+
+	// ── Resolve project directory ─────────────────────────────────────────────────
 	projectDir, err := filepath.Abs(".")
 	if err != nil {
 		return fmt.Errorf("resolve project directory: %w", err)
 	}
 
-	// ── Build PipelineContext ─────────────────────────────────────────────────
+	// ── Build PipelineContext ──────────────────────────────────────────────────
 	pctx := &pipeline.PipelineContext{
 		ProjectDir:  projectDir,
 		AWSRegion:   region,
 		AWSProfile:  profile,
 		AppName:     name,
+		Environment: environment,
 		TagOverride: tag,
 		AllowPublic: allowPublic,
 		DryRun:      dryRun,
@@ -150,6 +159,11 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 
 	pctx.RemoteState = projCfg.RemoteState
+	// If --environment was not passed, fall back to vessel.json default_environment.
+	if environment == "" && projCfg.DefaultEnvironment != "" {
+		environment = projCfg.DefaultEnvironment
+		pctx.Environment = environment
+	}
 
 	// ── State manager (load before Preflight to retrieve cached CIDR) ─────────
 	stateMgr := workspace.NewStateManager()
@@ -180,6 +194,21 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	// Apply merged env vars to the pipeline context.
 	if len(envVars) > 0 {
 		pctx.EnvVars = envVars
+	}
+
+	// ── Parse --secret KEY=VALUE flags ────────────────────────────────────────
+	// Values are NOT persisted to state.json; only key names are tracked.
+	if len(secretFlags) > 0 {
+		secretVars := make(map[string]string)
+		for _, kv := range secretFlags {
+			idx := strings.Index(kv, "=")
+			if idx < 0 {
+				return fmt.Errorf("invalid --secret %q: must be KEY=VALUE", kv)
+			}
+			key, val := kv[:idx], kv[idx+1:]
+			secretVars[key] = val // val="" means delete
+		}
+		pctx.SecretVars = secretVars
 	}
 
 	// ── Merge CPU / Memory / Port: CLI flag > state.json > built-in default ────
@@ -213,7 +242,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		AllowPublic:  allowPublic,
 	})
 
-	// ── Wire orchestrator ─────────────────────────────────────────────────────
+	// ── Wire orchestrator ──────────────────────────────────────────────────────────────
 	orch := pipeline.NewOrchestrator(pipeline.OrchestratorConfig{
 		Preflight:  preflight,
 		Workspace:  workspace.NewManager(projectDir),
@@ -224,6 +253,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		Executor:   terraform.NewExecutor(),
 		Deployer:   ecs.NewDeployer(region, profile),
 		ECRCleaner: internalecr.NewCleaner(region, profile),
+		SecretsMgr: secrets.NewManager(region, profile),
 		StateMgr:   stateMgr,
 		UI:         ui.NewDefault(),
 	})

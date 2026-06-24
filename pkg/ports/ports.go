@@ -172,3 +172,19 @@ type ECRCleaner interface {
 	// empty or does not exist.
 	DeleteAllImages(ctx context.Context, region, repoName string) error
 }
+
+// ─── PORT 9: Secrets Manager ──────────────────────────────────────────────────
+
+// SecretsManager manages sensitive deployment values in AWS Secrets Manager.
+// Secret values written via --secret KEY=VALUE are stored here and injected
+// into the ECS task definition via the `secrets` block (never in plaintext).
+type SecretsManager interface {
+	// PutSecret creates or updates a secret with the given name and value.
+	// Returns the full ARN of the secret, which is used in the task definition.
+	PutSecret(ctx context.Context, name, value string) (arn string, err error)
+
+	// DeleteSecret permanently deletes a secret without a recovery window.
+	// Safe to call on a non-existent secret (idempotent).
+	DeleteSecret(ctx context.Context, name string) error
+}
+

@@ -31,6 +31,7 @@ Examples:
 }
 
 func init() {
+	scaleCmd.Flags().StringP("environment", "e", "", "Deployment environment (e.g. staging, prod). Reads state.<env>.json.")
 	rootCmd.AddCommand(scaleCmd)
 }
 
@@ -53,8 +54,13 @@ func runScale(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load vessel.json: %w", err)
 	}
 
+	environment, _ := cmd.Flags().GetString("environment")
+	if environment == "" && projCfg.DefaultEnvironment != "" {
+		environment = projCfg.DefaultEnvironment
+	}
+
 	stateMgr := workspace.NewStateManager()
-	state, err := stateMgr.Load(ctx, projectDir, projCfg.RemoteState)
+	state, err := stateMgr.LoadForEnv(ctx, projectDir, environment, projCfg.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}

@@ -37,6 +37,7 @@ Press Ctrl+C to exit the shell.`,
 func init() {
 	execCmd.Flags().StringP("command", "c", "/bin/sh", "Command to run inside the container")
 	execCmd.Flags().StringP("task", "t", "", "Task ARN or ID to exec into (default: first RUNNING task)")
+	execCmd.Flags().StringP("environment", "e", "", "Deployment environment (e.g. staging, prod). Reads state.<env>.json.")
 	rootCmd.AddCommand(execCmd)
 }
 
@@ -55,8 +56,13 @@ func runExec(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("load vessel.json: %w", err)
 	}
 
+	environment, _ := cmd.Flags().GetString("environment")
+	if environment == "" && projCfg.DefaultEnvironment != "" {
+		environment = projCfg.DefaultEnvironment
+	}
+
 	stateMgr := workspace.NewStateManager()
-	state, err := stateMgr.Load(ctx, projectDir, projCfg.RemoteState)
+	state, err := stateMgr.LoadForEnv(ctx, projectDir, environment, projCfg.RemoteState)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}

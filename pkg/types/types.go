@@ -15,13 +15,20 @@ package types
 // from future stages (enforced by ordering in Orchestrator.Run).
 type PipelineContext struct {
 	// ── Stage 0: CLI inputs (set once by cmd/deploy.go) ──────────────────────
-	ProjectDir string // Absolute path to the target Go project
-	AWSRegion  string // e.g., "us-east-1"
-	AWSProfile string // e.g., "default"
-	AppName    string // From --name flag; overrides BinaryName if set
+	ProjectDir  string // Absolute path to the target Go project
+	AWSRegion   string // e.g., "us-east-1"
+	AWSProfile  string // e.g., "default"
+	AppName     string // From --name flag; overrides BinaryName if set
+	Environment string // From --environment flag (e.g. "staging", "prod"). Empty = no namespace suffix.
 	// EnvVars holds key=value pairs from --env flags, merged with any values
 	// persisted in state.json from a previous deploy. CLI flags take precedence.
-	EnvVars map[string]string // e.g., {"PORT": "8080", "DB_URL": "..."}
+	EnvVars map[string]string // e.g., {"PORT": "8080"}
+	// SecretVars holds key=value pairs from --secret flags. Values are written to
+	// AWS Secrets Manager at deploy time and are NEVER persisted locally.
+	SecretVars map[string]string // e.g., {"DB_PASSWORD": "hunter2"}
+	// SecretARNs is populated by the Secrets sync stage (0.5). It maps each
+	// secret key to its Secrets Manager ARN for injection into the task definition.
+	SecretARNs map[string]string // populated at runtime, not persisted
 
 	// ── Stage 0: Behavior flags ───────────────────────────────────────────────
 	TagOverride string // --tag: bypass git SHA and dirty-tree check (Q3)
@@ -35,9 +42,9 @@ type PipelineContext struct {
 	Memory int // Fargate task memory in MiB (512–30720)
 	Port   int // Container port to expose (default 8080)
 
-	// ── Stage 0: Networking flags ──────────────────────────────────────────
-	LoadBalancer    bool   // --load-balancer: provision an ALB in front of tasks
-	CertificateARN  string // --certificate-arn: ACM cert ARN; enables HTTPS listener
+	// ── Stage 0: Networking flags ─────────────────────────────────────────────
+	LoadBalancer   bool   // --load-balancer: provision an ALB in front of tasks
+	CertificateARN string // --certificate-arn: ACM cert ARN; enables HTTPS listener
 
 	// ── Stage 0: Remote State Configuration ──────────────────────────────────
 	RemoteState *RemoteStateConfig // Populated if vessel.json exists or flags are passed
@@ -60,7 +67,7 @@ type PipelineContext struct {
 	ImageID  string // Full Docker image ID
 
 	// ── Stage 4: IaC render outputs ──────────────────────────────────────────
-	TFWorkDir string // Absolute path to .vessel-cli/tf/
+	TFWorkDir string // Absolute path to .vessel-cli/tf[-<env>]/
 
 	// ── Stage 5: Terraform apply outputs ─────────────────────────────────────
 	CloudOutputs CloudOutputs
@@ -82,6 +89,7 @@ type CloudOutputs struct {
 // This is vessel-cli's own bookkeeping — NOT the Terraform state file.
 type DeploymentState struct {
 	AppName          string            `json:"app_name"`
+	Environment      string            `json:"environment,omitempty"`   // e.g. "staging", "prod"; empty = default
 	AWSRegion        string            `json:"aws_region"`
 	LastImageTag     string            `json:"last_image_tag"`
 	ECRRepositoryURI string            `json:"ecr_repository_uri"`
@@ -91,6 +99,11 @@ type DeploymentState struct {
 	// A new --env flag overrides a persisted key; omitting --env preserves all
 	// previously set vars. Use --env KEY= (empty value) to unset a key.
 	EnvVars map[string]string `json:"env_vars,omitempty"`
+	// SecretKeys lists the keys stored in AWS Secrets Manager for this deployment.
+	// Secret VALUES are never persisted here — only the key names.
+	// On re-deploy, existing keys are updated; keys absent from the new --secret
+	// flags are preserved (use --secret KEY= to delete a secret).
+	SecretKeys []string `json:"secret_keys,omitempty"`
 	// CachedCIDR is set on first deploy and reused on all subsequent deploys
 	// so the SG rule is stable across IP-rotating networks (Q9).
 	CachedCIDR string `json:"cached_cidr"`

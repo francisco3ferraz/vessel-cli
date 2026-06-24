@@ -25,27 +25,36 @@ var templateFS embed.FS
 // It is derived from PipelineContext at render time and is the sole input
 // to the template engine — the templates never import Go types directly.
 type TerraformSpec struct {
-	AppName      string
-	AWSRegion    string
-	ImageTag     string // ECR tag suffix only (e.g. "abc12345", not "app:abc12345")
-	AllowedCIDR  string
-	DesiredCount int
-	CPU          int
-	Memory       int
-	Port         int
+	AppName        string
+	AWSRegion      string
+	ImageTag       string // ECR tag suffix only (e.g. "abc12345", not "app:abc12345")
+	AllowedCIDR    string
+	DesiredCount   int
+	CPU            int
+	Memory         int
+	Port           int
 	LoadBalancer   bool
 	CertificateARN string
-	EnvVars      []EnvVar // sorted by Name for deterministic output
+	EnvVars        []EnvVar    // sorted by Name for deterministic output
+	SecretVars     []SecretVar // sorted by Name for deterministic output
 	// IsDestroy removes lifecycle guards (e.g. prevent_destroy on ECR)
 	// so `terraform destroy` can succeed. Set only by the destroy path.
 	IsDestroy bool
-	Backend *ports.BackendConfig
+	Backend   *ports.BackendConfig
 }
 
-// EnvVar is a single name/value environment variable pair.
+// EnvVar is a single name/value environment variable pair (plain, not secret).
 type EnvVar struct {
 	Name  string
 	Value string
+}
+
+// SecretVar is a Secrets Manager reference injected into the ECS task definition
+// via the `secrets` block. The container receives the value as an env var at
+// runtime; the value itself never appears in Terraform HCL.
+type SecretVar struct {
+	Name      string // environment variable name inside the container
+	ValueFrom string // full Secrets Manager ARN
 }
 
 // Renderer implements ports.IaCRenderer.
@@ -62,8 +71,8 @@ func NewRenderer() *Renderer { return &Renderer{} }
 // the local backend is used (no explicit backend block = Terraform default).
 func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, backend ports.BackendConfig) error {
 	spec := TerraformSpec{
-		AppName:  pctx.AppName,
-		AWSRegion: pctx.AWSRegion,
+		AppName:        pctx.AppName,
+		AWSRegion:      pctx.AWSRegion,
 		// ImageTag must be ONLY the tag suffix (e.g. "abc12345" or "local"),
 		// NOT the full local name:tag. The ECR image URL is constructed in
 		// main.tf as: "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
@@ -77,6 +86,7 @@ func (r *Renderer) Render(_ context.Context, pctx *types.PipelineContext, backen
 		LoadBalancer:   pctx.LoadBalancer,
 		CertificateARN: pctx.CertificateARN,
 		EnvVars:        sortedEnvVars(pctx.EnvVars),
+		SecretVars:     sortedSecretARNs(pctx.SecretARNs),
 		IsDestroy:      pctx.Destroy,
 		Backend:        &backend,
 	}
@@ -144,6 +154,25 @@ func sortedEnvVars(m map[string]string) []EnvVar {
 	out := make([]EnvVar, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, EnvVar{Name: k, Value: m[k]})
+	}
+	return out
+}
+
+// sortedSecretARNs converts the SecretARNs map to a sorted SecretVar slice for
+// deterministic template output. The container receives each secret as an env
+// var sourced directly from Secrets Manager at task startup time.
+func sortedSecretARNs(m map[string]string) []SecretVar {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]SecretVar, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, SecretVar{Name: k, ValueFrom: m[k]})
 	}
 	return out
 }
